@@ -22,6 +22,8 @@
 #include "channel.h"
 #include "varwriter.h"
 
+class Servent;
+
 // ----------------------------------
 class ChanMgr : public VariableWriter
 {
@@ -47,7 +49,6 @@ public:
 
     void    broadcastTrackerSettings();
     void    setUpdateInterval(unsigned int v);
-    void    broadcastRelays(Servent *, int, int);
 
     int     broadcastPacketUp(ChanPacket &, GnuID &, GnuID &, GnuID &);
     void    broadcastTrackerUpdate(GnuID &, bool = false);
@@ -106,7 +107,7 @@ public:
     int             numFinds;
     ::String        broadcastMsg;
     unsigned int    broadcastMsgInterval;
-    unsigned int    lastHit, lastQuery;
+    unsigned int    lastHit;
     unsigned int    maxUptime;
     bool            searchActive;
     unsigned int    deadHitAge;
@@ -115,7 +116,6 @@ public:
     std::recursive_mutex lock;
     int             minBroadcastTTL, maxBroadcastTTL;
     int             pushTimeout, pushTries, maxPushHops;
-    unsigned int    autoQuery;
     unsigned int    prefetchTime;
     unsigned int    lastYPConnect;
     unsigned int    icyIndex;

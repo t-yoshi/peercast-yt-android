@@ -18,15 +18,15 @@ TEST_F(ServMgrFixture, initialState)
     // char                password[64];
     ASSERT_STREQ("", m.password);
     // bool                allowGnutella;
-    ASSERT_FALSE(m.allowGnutella);
+    // ASSERT_FALSE(m.allowGnutella);
     // unsigned int        maxBitrateOut, maxControl, maxRelays, maxDirect;
     ASSERT_EQ(0, m.maxBitrateOut);
     ASSERT_EQ(3, m.maxControl);
     ASSERT_EQ(2, m.maxRelays);
     ASSERT_EQ(0, m.maxDirect);
     // unsigned int        minGnuIncoming, maxGnuIncoming;
-    ASSERT_EQ(10, m.minGnuIncoming);
-    ASSERT_EQ(20, m.maxGnuIncoming);
+    //ASSERT_EQ(10, m.minGnuIncoming);
+    //ASSERT_EQ(20, m.maxGnuIncoming);
     // unsigned int        maxServIn;
     ASSERT_EQ(50, m.maxServIn);
     // bool                isDisabled;
@@ -38,7 +38,7 @@ TEST_F(ServMgrFixture, initialState)
     // Host                serverHost;
     ASSERT_STREQ("127.0.0.1:7144", m.serverHost.str().c_str());
     // String              rootHost;
-    ASSERT_STREQ("bayonet.ddo.jp:7146", m.rootHost.cstr());
+    ASSERT_STREQ("yp.pcgw.pgw.jp:7146", m.rootHost.cstr());
     // char                downloadURL[128];
     ASSERT_STREQ("", m.downloadURL);
     // String              rootMsg;
@@ -72,10 +72,10 @@ TEST_F(ServMgrFixture, initialState)
     ASSERT_TRUE(m.autoServe);
     ASSERT_TRUE(m.forceLookup);
     // int                 queryTTL;
-    ASSERT_EQ(7, m.queryTTL);
+    //ASSERT_EQ(7, m.queryTTL);
     // unsigned int        allowServer1, allowServer2;
     ASSERT_EQ(Servent::ALLOW_ALL, m.allowServer1);
-    ASSERT_EQ(Servent::ALLOW_BROADCAST, m.allowServer2);
+    //ASSERT_EQ(Servent::ALLOW_BROADCAST, m.allowServer2);
     // unsigned int        startTime;
     ASSERT_EQ(0, m.startTime);
     // unsigned int        tryoutDelay;
@@ -87,11 +87,11 @@ TEST_F(ServMgrFixture, initialState)
     // unsigned int        notifyMask;
     ASSERT_EQ(0xffff, m.notifyMask);
     // BCID                *validBCID;
-    ASSERT_EQ(nullptr, m.validBCID);
+    //ASSERT_EQ(nullptr, m.validBCID);
     // GnuID               sessionID;
     ASSERT_STREQ("00151515151515151515151515151515", m.sessionID.str().c_str());
     // ServFilter          filters[MAX_FILTERS];
-    ASSERT_EQ(0xffffffff, m.filters[0].host.ip);
+    ASSERT_EQ("255.255.255.255", m.filters[0].getPattern());
     ASSERT_EQ(ServFilter::F_NETWORK|ServFilter::F_DIRECT, m.filters[0].flags);
     // int                 numFilters;
     ASSERT_EQ(1, m.numFilters);
@@ -105,16 +105,11 @@ TEST_F(ServMgrFixture, initialState)
     // String              chanLog;
     ASSERT_STREQ("", m.chanLog.cstr());
     // ChannelDirectory    channelDirectory;
-    // bool                publicDirectoryEnabled;
-    ASSERT_FALSE(m.publicDirectoryEnabled);
     // FW_STATE            firewalled;
     ASSERT_EQ(ServMgr::FW_UNKNOWN, m.firewalled);
 
     // String              serverName;
     ASSERT_TRUE(m.serverName == "");
-
-    // std::string         genrePrefix;
-    ASSERT_EQ("", m.genrePrefix);
 
     // bool                transcodingEnabled;
     ASSERT_FALSE(m.transcodingEnabled);
@@ -185,7 +180,7 @@ TEST_F(ServMgrFixture, writeVariable)
 
     mem.str("");
     ASSERT_TRUE(m.writeVariable(mem, "ypAddress"));
-    ASSERT_STREQ("bayonet.ddo.jp:7146", mem.str().c_str());
+    ASSERT_STREQ("yp.pcgw.pgw.jp:7146", mem.str().c_str());
 
     mem.str("");
     ASSERT_TRUE(m.writeVariable(mem, "password"));
@@ -240,23 +235,7 @@ TEST_F(ServMgrFixture, writeVariable)
     ASSERT_STREQ("2", mem.str().c_str());
 
     mem.str("");
-    ASSERT_TRUE(m.writeVariable(mem, "maxPGNUIn"));
-    ASSERT_STREQ("20", mem.str().c_str());
-
-    mem.str("");
-    ASSERT_TRUE(m.writeVariable(mem, "minPGNUIn"));
-    ASSERT_STREQ("10", mem.str().c_str());
-
-    mem.str("");
     ASSERT_TRUE(m.writeVariable(mem, "numActive1"));
-    ASSERT_STREQ("0", mem.str().c_str());
-
-    mem.str("");
-    ASSERT_TRUE(m.writeVariable(mem, "numActive2"));
-    ASSERT_STREQ("0", mem.str().c_str());
-
-    mem.str("");
-    ASSERT_TRUE(m.writeVariable(mem, "numPGNU"));
     ASSERT_STREQ("0", mem.str().c_str());
 
     mem.str("");
@@ -269,10 +248,6 @@ TEST_F(ServMgrFixture, writeVariable)
 
     mem.str("");
     ASSERT_TRUE(m.writeVariable(mem, "numIncoming"));
-    ASSERT_STREQ("0", mem.str().c_str());
-
-    mem.str("");
-    ASSERT_TRUE(m.writeVariable(mem, "numValidBCID"));
     ASSERT_STREQ("0", mem.str().c_str());
 
     mem.str("");
@@ -292,19 +267,11 @@ TEST_F(ServMgrFixture, writeVariable)
     ASSERT_STREQ("", mem.str().c_str());
 
     mem.str("");
-    ASSERT_TRUE(m.writeVariable(mem, "serverPort2"));
-    ASSERT_STREQ("7145", mem.str().c_str());
-
-    mem.str("");
     ASSERT_TRUE(m.writeVariable(mem, "allow.HTML1"));
     ASSERT_STREQ("1", mem.str().c_str());
 
     mem.str("");
     ASSERT_TRUE(m.writeVariable(mem, "allow.broadcasting1"));
-    ASSERT_STREQ("1", mem.str().c_str());
-
-    mem.str("");
-    ASSERT_TRUE(m.writeVariable(mem, "allow.broadcasting2"));
     ASSERT_STREQ("1", mem.str().c_str());
 
     mem.str("");
@@ -341,21 +308,13 @@ TEST_F(ServMgrFixture, writeVariable)
 
     mem.str("");
     ASSERT_TRUE(m.writeVariable(mem, "numChannelFeedsPlusOne"));
-    ASSERT_STREQ("1", mem.str().c_str());
+    ASSERT_STREQ("2", mem.str().c_str());
 
     mem.str("");
     ASSERT_TRUE(m.writeVariable(mem, "numChannelFeeds"));
-    ASSERT_STREQ("0", mem.str().c_str());
+    ASSERT_STREQ("1", mem.str().c_str());
 
     // channelDirectory.*
-
-    mem.str("");
-    ASSERT_TRUE(m.writeVariable(mem, "publicDirectoryEnabled"));
-    ASSERT_STREQ("0", mem.str().c_str());
-
-    mem.str("");
-    ASSERT_TRUE(m.writeVariable(mem, "genrePrefix"));
-    ASSERT_STREQ("", mem.str().c_str());
 
     mem.str("");
     ASSERT_TRUE(m.writeVariable(mem, "test"));
@@ -386,7 +345,7 @@ TEST_F(ServMgrFixture, numStreams_nullcase)
     ASSERT_EQ(0, m.numStreams(Servent::T_DIRECT, false));
     ASSERT_EQ(0, m.numStreams(Servent::T_COUT, false));
     ASSERT_EQ(0, m.numStreams(Servent::T_CIN, false));
-    ASSERT_EQ(0, m.numStreams(Servent::T_PGNU, false));
+    //ASSERT_EQ(0, m.numStreams(Servent::T_PGNU, false));
 
     ASSERT_EQ(0, m.numStreams(Servent::T_NONE, true));
     ASSERT_EQ(0, m.numStreams(Servent::T_INCOMING, true));
@@ -395,7 +354,7 @@ TEST_F(ServMgrFixture, numStreams_nullcase)
     ASSERT_EQ(0, m.numStreams(Servent::T_DIRECT, true));
     ASSERT_EQ(0, m.numStreams(Servent::T_COUT, true));
     ASSERT_EQ(0, m.numStreams(Servent::T_CIN, true));
-    ASSERT_EQ(0, m.numStreams(Servent::T_PGNU, true));
+    //ASSERT_EQ(0, m.numStreams(Servent::T_PGNU, true));
 }
 
 TEST_F(ServMgrFixture, numStreams_connectedRelaysAreCounted)
@@ -455,12 +414,8 @@ TEST_F(ServMgrFixture, doSaveSettings)
               "authType = cookie\r\n"
               "cookiesExpire = session\r\n"
               "htmlPath = html/en\r\n"
-              "minPGNUIncoming = 10\r\n"
-              "maxPGNUIncoming = 20\r\n"
               "maxServIn = 50\r\n"
               "chanLog = \r\n"
-              "publicDirectory = No\r\n"
-              "genrePrefix = \r\n"
               "networkID = 00000000000000000000000000000000\r\n"
               "\r\n"
               "[Broadcast]\r\n"
@@ -470,7 +425,7 @@ TEST_F(ServMgrFixture, doSaveSettings)
               "broadcastID = 00151515151515151515151515151515\r\n"
               "hostUpdateInterval = 120\r\n"
               "maxControlConnections = 3\r\n"
-              "rootHost = bayonet.ddo.jp:7146\r\n"
+              "rootHost = yp.pcgw.pgw.jp:7146\r\n"
               "\r\n"
               "[Client]\r\n"
               "refreshHTML = 5\r\n"
@@ -480,8 +435,6 @@ TEST_F(ServMgrFixture, doSaveSettings)
               "pushTries = 5\r\n"
               "pushTimeout = 60\r\n"
               "maxPushHops = 8\r\n"
-              "autoQuery = 0\r\n"
-              "queryTTL = 7\r\n"
               "transcodingEnabled = No\r\n"
               "preset = veryfast\r\n"
               "audioCodec = mp3\r\n"
@@ -499,14 +452,18 @@ TEST_F(ServMgrFixture, doSaveSettings)
               "direct = Yes\r\n"
               "[End]\r\n"
               "\r\n"
-	      "[Uptest]\r\n"
-	      "url = http://bayonet.ddo.jp/sp/yp4g.xml\r\n"
-	      "[End]\r\n"
-	      "\r\n"
-	      "[Uptest]\r\n"
-	      "url = http://temp.orz.hm/yp/yp4g.xml\r\n"
-	      "[End]\r\n"
-	      "\r\n"
+              "[Feed]\r\n"
+              "url = http://yp.pcgw.pgw.jp/index.txt\r\n"
+              "[End]\r\n"
+              "\r\n"
+              "[Uptest]\r\n"
+              "url = http://bayonet.ddo.jp/sp/yp4g.xml\r\n"
+              "[End]\r\n"
+              "\r\n"
+              "[Uptest]\r\n"
+              "url = http://temp.orz.hm/yp/yp4g.xml\r\n"
+              "[End]\r\n"
+              "\r\n"
               "[Notify]\r\n"
               "PeerCast = Yes\r\n"
               "Broadcasters = Yes\r\n"
@@ -520,13 +477,6 @@ TEST_F(ServMgrFixture, doSaveSettings)
               "allowDirect = Yes\r\n"
               "[End]\r\n"
               "\r\n"
-              "[Server2]\r\n"
-              "allowHTML = No\r\n"
-              "allowBroadcast = Yes\r\n"
-              "allowNetwork = No\r\n"
-              "allowDirect = No\r\n"
-              "[End]\r\n"
-              "\r\n"
               "[Debug]\r\n"
               "logLevel = 3\r\n"
               "pauseLog = No\r\n"
@@ -536,7 +486,7 @@ TEST_F(ServMgrFixture, doSaveSettings)
 TEST_F(ServMgrFixture, hasUnsafeFilterSettings)
 {
     ASSERT_EQ(1, m.numFilters);
-    ASSERT_STREQ(m.filters[0].host.IPtoStr().c_str(), "255.255.255.255");
+    ASSERT_EQ("255.255.255.255", m.filters[0].getPattern());
     ASSERT_FALSE(m.hasUnsafeFilterSettings());
 
     m.filters[0].flags |= ServFilter::F_PRIVATE;

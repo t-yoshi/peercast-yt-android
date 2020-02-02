@@ -46,7 +46,6 @@ TEST_F(ServentFixture, initialState)
     ASSERT_EQ(0, s.lastPacket);
     ASSERT_STREQ("", s.agent.cstr());
 
-    ASSERT_EQ(0, s.seenIDs.numUsed());
     ASSERT_STREQ("00000000000000000000000000000000", s.networkID.str().c_str());
     ASSERT_EQ(0, s.serventIndex);
 
@@ -380,37 +379,6 @@ TEST_F(ServentFixture, writeVariable)
     ASSERT_TRUE(s.writeVariable(mem, "uptime"));
     ASSERT_STREQ("-", mem.str().c_str());
 
-    mem.str("");
-    ASSERT_TRUE(s.writeVariable(mem, "gnet.packetsIn"));
-    ASSERT_STREQ("0", mem.str().c_str());
-
-    mem.str("");
-    ASSERT_TRUE(s.writeVariable(mem, "gnet.packetsInPerSec"));
-    ASSERT_STREQ("0.0", mem.str().c_str());
-
-    mem.str("");
-    ASSERT_TRUE(s.writeVariable(mem, "gnet.packetsOut"));
-    ASSERT_STREQ("0", mem.str().c_str());
-
-    mem.str("");
-    ASSERT_TRUE(s.writeVariable(mem, "gnet.packetsOutPerSec"));
-    ASSERT_STREQ("0.0", mem.str().c_str());
-
-    mem.str("");
-    ASSERT_TRUE(s.writeVariable(mem, "gnet.normQueue"));
-    ASSERT_STREQ("0", mem.str().c_str());
-
-    mem.str("");
-    ASSERT_TRUE(s.writeVariable(mem, "gnet.priQueue"));
-    ASSERT_STREQ("0", mem.str().c_str());
-
-    mem.str("");
-    ASSERT_TRUE(s.writeVariable(mem, "gnet.flowControl"));
-    ASSERT_STREQ("0", mem.str().c_str());
-
-    mem.str("");
-    ASSERT_TRUE(s.writeVariable(mem, "gnet.routeTime"));
-    ASSERT_STREQ("-", mem.str().c_str());
 }
 
 TEST_F(ServentFixture, handshakeIncoming_viewxml)
@@ -849,4 +817,20 @@ TEST_F(ServentFixture, isTerminationCandidate_port0_ST)
 
         ASSERT_TRUE(Servent::isTerminationCandidate(&h));
     }
+}
+
+TEST_F(ServentFixture, fileNameToMimeType)
+{
+    ASSERT_STREQ(MIME_HTML, Servent::fileNameToMimeType("a.htm"));
+    ASSERT_STREQ(MIME_HTML, Servent::fileNameToMimeType("a.html"));
+    ASSERT_STREQ(MIME_HTML, Servent::fileNameToMimeType("a.HTM"));
+    ASSERT_STREQ(MIME_HTML, Servent::fileNameToMimeType("a.HTML"));
+    ASSERT_STREQ(MIME_CSS, Servent::fileNameToMimeType("a.css"));
+    ASSERT_STREQ(MIME_JPEG, Servent::fileNameToMimeType("a.jpg"));
+    ASSERT_STREQ(nullptr, Servent::fileNameToMimeType("a.jpeg"));
+    ASSERT_STREQ(MIME_GIF, Servent::fileNameToMimeType("a.gif"));
+    ASSERT_STREQ(MIME_PNG, Servent::fileNameToMimeType("a.png"));
+    ASSERT_STREQ(MIME_JS, Servent::fileNameToMimeType("a.js"));
+    ASSERT_STREQ(MIME_ICO, Servent::fileNameToMimeType("a.ico"));
+    ASSERT_STREQ(nullptr, Servent::fileNameToMimeType("a.txt"));
 }

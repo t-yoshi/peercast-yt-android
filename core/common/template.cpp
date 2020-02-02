@@ -158,11 +158,6 @@ bool Template::writeLoopVariable(Stream &s, const String &varName, int loop)
     {
         ServFilter *sf = &servMgr->filters[loop];
         return sf->writeVariable(s, varName+12);
-    }else if (varName.startsWith("loop.bcid."))
-    {
-        BCID *bcid = servMgr->findValidBCID(loop);
-        if (bcid)
-            return bcid->writeVariable(s, varName+10);
     }else if (varName == "loop.indexEven")
     {
         s.writeStringF("%d", (loop&1)==0);
@@ -681,13 +676,6 @@ json::array_t Template::evaluateCollectionVariable(String& varName)
     {
         auto channels = JrpcApi().getYPChannelsInternal({});
         return channels;
-    }else if (varName == "publicExternalChannels")
-    {
-        auto channels = JrpcApi().getYPChannelsInternal({});
-        auto end = std::remove_if(channels.begin(), channels.end(),
-                                  [&] (json c)
-                                  { return !c["isPublic"]; });
-        return json::array_t(channels.begin(), end);
     }else
     {
         return {};
@@ -925,6 +913,17 @@ bool HTTPRequestScope::writeVariable(Stream& s, const String& varName, int loop)
     }else if (varName == "request.path") // HTTPRequest に委譲すべきか
     {
         s.writeString(m_request.path);
+        return true;
+    }else if (varName == "request.queryString")
+    {
+        s.writeString(m_request.queryString);
+        return true;
+    }else if (varName == "request.search")
+    {
+        if (m_request.queryString != "")
+        {
+            s.writeString("?" + m_request.queryString);
+        }
         return true;
     }
 

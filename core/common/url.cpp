@@ -24,6 +24,7 @@
 #include "peercast.h"
 #include "version2.h"
 #include "playlist.h"
+#include "gnutella.h"
 #ifdef WITH_RTMP
 #include "rtmp.h"
 #endif
@@ -129,7 +130,7 @@ ChanInfo::PROTOCOL URLSource::getSourceProtocol(char*& fileName)
 
             LOG_INFO("Channel source is HTTP");
 
-            ClientSocket *inputSocket = sys->createSocket();
+            std::shared_ptr<ClientSocket> inputSocket(sys->createSocket());
             if (!inputSocket)
                 throw StreamException("Channel cannot create socket");
 
@@ -222,8 +223,7 @@ ChanInfo::PROTOCOL URLSource::getSourceProtocol(char*& fileName)
             {
                 LOG_INFO("Channel redirect: %s", nextURL.cstr());
                 inputSocket->close();
-                delete inputSocket;
-                inputSocket = NULL;
+                inputSocket = nullptr;
                 return nextURL;
             }
 
@@ -237,7 +237,7 @@ ChanInfo::PROTOCOL URLSource::getSourceProtocol(char*& fileName)
 #ifdef WITH_RTMP
             LOG_INFO("Channel source is RTMP");
 
-            RTMPClientStream *rs = new RTMPClientStream();
+            std::shared_ptr<RTMPClientStream> rs(new RTMPClientStream());
             rs->open(url);
             inputStream = rs;
 
@@ -251,7 +251,7 @@ ChanInfo::PROTOCOL URLSource::getSourceProtocol(char*& fileName)
         {
             LOG_INFO("Channel source is FILE");
 
-            FileStream *fs = new FileStream();
+            std::shared_ptr<FileStream> fs(new FileStream());
             fs->openReadOnly(fileName);
             inputStream = fs;
 
@@ -282,8 +282,7 @@ ChanInfo::PROTOCOL URLSource::getSourceProtocol(char*& fileName)
             pls->read(*inputStream);
 
             inputStream->close();
-            delete inputStream;
-            inputStream = NULL;
+            inputStream = nullptr;
 
             int urlNum = 0;
             String url;
@@ -336,8 +335,7 @@ ChanInfo::PROTOCOL URLSource::getSourceProtocol(char*& fileName)
     ch->setStatus(Channel::S_CLOSING);
     if (inputStream)
     {
-        delete inputStream;
-        inputStream = NULL;
+        inputStream = nullptr;
     }
 
     if (source)

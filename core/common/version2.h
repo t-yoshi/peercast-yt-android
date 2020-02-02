@@ -20,26 +20,17 @@
 #define _VERSION2_H
 
 // ------------------------------------------------
-#ifdef PRIVATE_BROADCASTER
-static const char PCP_BROADCAST_FLAGS   = 0x01;
-#define PCP_FORCE_YP true
-#else
-static const char PCP_BROADCAST_FLAGS   = 0x00;
-#define PCP_FORCE_YP false
-#endif
-
-// ------------------------------------------------
 static const int PCP_CLIENT_VERSION     = 1218;
 static const int PCP_CLIENT_VERSION_VP  = 27;
 static const int PCP_ROOT_VERSION       = 1218;
 
 static const int PCP_CLIENT_MINVERSION  = 1200;
 
-#define PCX_AGENT "PeerCast/0.1218 (YT28)"
-#define PCX_VERSTRING "v0.1218 YT28"
+#define PCX_AGENT "PeerCast/0.1218 (YT30)"
+#define PCX_VERSTRING "v0.1218 YT30"
 
 #define PCP_CLIENT_VERSION_EX_PREFIX "YT"
-static const int PCP_CLIENT_VERSION_EX_NUMBER = 28;
+static const int PCP_CLIENT_VERSION_EX_NUMBER = 30;
 // ------------------------------------------------
 
 #endif

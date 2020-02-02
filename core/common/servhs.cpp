@@ -30,8 +30,9 @@
 #include "str.h"
 #include "cgi.h"
 #include "template.h"
-#include "public.h"
+#include "assets.h"
 #include "uptest.h"
+#include "gnutella.h"
 
 using namespace std;
 
@@ -292,19 +293,6 @@ void Servent::handshakeGET(HTTP &http)
 
         LOG_DEBUG("Admin client");
         handshakeCMD(http, fn+8);
-    }else if (strncmp(fn, "/http/", 6) == 0)
-    {
-        // peercast.org へのプロキシ接続
-
-        String dirName = fn+6;
-
-        if (!isAllowed(ALLOW_HTML))
-            throw HTTPException(HTTP_SC_UNAVAILABLE, 503);
-
-        if (!handshakeAuth(http, fn, false))
-            throw HTTPException(HTTP_SC_UNAUTHORIZED, 401);
-
-        handshakeRemoteFile(dirName);
     }else if (strcmp(fn, "/html/index.html") == 0)
     {
         // PeerCastStation が "/" を "/html/index.html" に 301 Moved
@@ -424,27 +412,6 @@ void Servent::handshakeGET(HTTP &http)
             http.writeLineF("%s %zu", HTTP_HS_LENGTH, response.size());
             http.writeLine("");
             http.writeString(response.c_str());
-        }
-    }else if (strcmp(fn, "/public")== 0 ||
-              strncmp(fn, "/public/", strlen("/public/"))==0)
-    {
-        // 公開ディレクトリ
-
-        http.readHeaders();
-
-        if (!servMgr->publicDirectoryEnabled)
-        {
-            throw HTTPException(HTTP_SC_FORBIDDEN, 403);
-        }
-
-        try
-        {
-            PublicController controller(peercastApp->getPath() + std::string("public"));
-            http.send(controller(http.getRequest(), *sock, sock->host));
-        } catch (GeneralException& e)
-        {
-            LOG_ERROR("Error: %s", e.msg);
-            throw HTTPException(HTTP_SC_SERVERERROR, 500);
         }
     }else if (str::is_prefix_of("/assets/", fn))
     {
@@ -581,14 +548,14 @@ void Servent::handshakeGIV(const char *requestLine)
             throw HTTPException(HTTP_SC_UNAVAILABLE, 503);
 
         LOG_DEBUG("Accepted GIV channel %s from: %s", idstr, ipstr);
-        sock=NULL;                  // release this servent but dont close socket.
+        sock = NULL;                  // release this servent but dont close socket.
     }else
     {
         if (!servMgr->acceptGIV(sock))
             throw HTTPException(HTTP_SC_UNAVAILABLE, 503);
 
         LOG_DEBUG("Accepted GIV PCP from: %s", ipstr);
-        sock=NULL;                  // release this servent but dont close socket.
+        sock = NULL;                  // release this servent but dont close socket.
     }
 }
 
@@ -648,13 +615,6 @@ void Servent::handshakeHTTP(HTTP &http, bool isHTTP)
             throw HTTPException(HTTP_SC_UNAVAILABLE, 503);
 
         processIncomingPCP(true);
-    }else if (http.isRequest("PEERCAST CONNECT"))
-    {
-        if (!isAllowed(ALLOW_NETWORK) || !isFiltered(ServFilter::F_NETWORK))
-            throw HTTPException(HTTP_SC_UNAVAILABLE, 503);
-
-        LOG_DEBUG("PEERCAST client");
-        processServent();
     }else if (http.isRequest("SOURCE"))
     {
         // Icecast 放送
@@ -910,16 +870,13 @@ bool Servent::handshakeAuth(HTTP &http, const char *args, bool local)
     {
         String file = servMgr->htmlPath;
         file.append("/login.html");
-        if (local)
+        if (http.headers.get("X-Requested-With") == "XMLHttpRequest")
+            throw HTTPException(HTTP_SC_FORBIDDEN, 403);
+        else
         {
-            if (http.headers.get("X-Requested-With") == "XMLHttpRequest")
-                throw HTTPException(HTTP_SC_FORBIDDEN, 403);
-            else
-            {
-                handshakeLocalFile(file, http);
-            }
-        }else
-            handshakeRemoteFile(file);
+            // XXX
+            handshakeLocalFile(file, http);
+        }
     }
 
     return false;
@@ -972,72 +929,6 @@ void Servent::CMD_clearlog(const char* cmd, HTTP& http, String& jumpStr)
     jumpStr.sprintf("/%s/viewlog.html", servMgr->htmlPath);
 }
 
-void Servent::CMD_edit_bcid(const char* cmd, HTTP& http, String& jumpStr)
-{
-    char arg[MAX_CGI_LEN];
-    char curr[MAX_CGI_LEN];
-
-    const char *cp = cmd;
-    GnuID id;
-    BCID *bcid;
-
-    while ((cp = nextCGIarg(cp, curr, arg)) != nullptr)
-    {
-        if (strcmp(curr, "id") == 0)
-            id.fromStr(arg);
-        else if (strcmp(curr, "del") == 0)
-            servMgr->removeValidBCID(id);
-        else if (strcmp(curr, "valid") == 0)
-        {
-            bcid = servMgr->findValidBCID(id);
-            if (bcid)
-                bcid->valid = getCGIargBOOL(arg);
-        }
-    }
-
-    peercastInst->saveSettings();
-    jumpStr.sprintf("/%s/bcid.html", servMgr->htmlPath);
-}
-
-void Servent::CMD_add_bcid(const char* cmd, HTTP& http, String& jumpStr)
-{
-    char arg[MAX_CGI_LEN];
-    char curr[MAX_CGI_LEN];
-
-    BCID *bcid = new BCID();
-
-    const char *cp = cmd;
-    bool result=false;
-    while ((cp = nextCGIarg(cp, curr, arg)) != nullptr)
-    {
-        if (strcmp(curr, "id") == 0)
-            bcid->id.fromStr(arg);
-        else if (strcmp(curr, "name") == 0)
-            bcid->name.set(arg);
-        else if (strcmp(curr, "email") == 0)
-            bcid->email.set(arg);
-        else if (strcmp(curr, "url") == 0)
-            bcid->url.set(arg);
-        else if (strcmp(curr, "valid") == 0)
-            bcid->valid = getCGIargBOOL(arg);
-        else if (strcmp(curr, "result") == 0)
-            result = true;
-    }
-
-    LOG_DEBUG("Adding BCID : %s", bcid->name.cstr());
-    servMgr->addValidBCID(bcid);
-    peercastInst->saveSettings();
-    if (result)
-    {
-        http.writeLine(HTTP_SC_OK);
-        http.writeLine("");
-        http.writeString("OK");
-    }else
-    {
-        jumpStr.sprintf("/%s/bcid.html", servMgr->htmlPath);
-    }
-}
-
 void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
 {
     std::lock_guard<std::recursive_mutex> cs(servMgr->lock);
@@ -1045,7 +936,6 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
     servMgr->numFilters = 0;
     ServFilter *currFilter = servMgr->filters;
     servMgr->channelDirectory->clearFeeds();
-    servMgr->publicDirectoryEnabled = false;
     servMgr->transcodingEnabled = false;
 
     bool brRoot = false;
@@ -1101,10 +991,7 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
         {
             servMgr->rootMsg.set(arg, String::T_ESC);
             servMgr->rootMsg.convertTo(String::T_UNICODE);
-        }else if (strcmp(curr, "minpgnu") == 0)
-            servMgr->minGnuIncoming = atoi(arg);
-        else if (strcmp(curr, "maxpgnu") == 0)
-            servMgr->maxGnuIncoming = atoi(arg);
+        }
 
         // connections
         else if (strcmp(curr, "maxcin") == 0)
@@ -1128,8 +1015,8 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
             {
                 currFilter = &servMgr->filters[servMgr->numFilters];
                 currFilter->init();
-                currFilter->host.fromStrIP(arg, DEFAULT_PORT);
-                if ((currFilter->host.ip) && (servMgr->numFilters < (ServMgr::MAX_FILTERS-1)))
+                currFilter->setPattern(arg);
+                if (currFilter->isSet() && (servMgr->numFilters < (ServMgr::MAX_FILTERS-1)))
                 {
                     servMgr->numFilters++;
                     servMgr->filters[servMgr->numFilters].init();   // clear new entry
@@ -1152,30 +1039,20 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
                 servMgr->channelDirectory->addFeed(str.cstr());
             }
         }
-        else if (strncmp(curr, "channel_feed_public", strlen("channel_feed_public")) == 0)
-        {
-            int index = atoi(curr + strlen("channel_feed_public"));
-            servMgr->channelDirectory->setFeedPublic(index, true);
-        }
 
         // client
         else if (strcmp(curr, "clientactive") == 0)
             servMgr->autoConnect = getCGIargBOOL(arg);
         else if (strcmp(curr, "yp") == 0)
         {
-            if (!PCP_FORCE_YP)
-            {
-                String str(arg, String::T_ESC);
-                str.convertTo(String::T_ASCII);
-                servMgr->rootHost = str;
-            }
+            String str(arg, String::T_ESC);
+            str.convertTo(String::T_ASCII);
+            servMgr->rootHost = str;
         }
         else if (strcmp(curr, "deadhitage") == 0)
             chanMgr->deadHitAge = getCGIargINT(arg);
         else if (strcmp(curr, "refresh") == 0)
             servMgr->refreshHTML = getCGIargINT(arg);
-        else if (strcmp(curr, "public_directory") == 0)
-            servMgr->publicDirectoryEnabled = true;
         else if (strcmp(curr, "genreprefix") == 0)
             servMgr->genrePrefix = arg;
         else if (strcmp(curr, "auth") == 0)
@@ -1204,11 +1081,6 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
         else if (strcmp(curr, "allowDirect1") == 0)
             allowServer1 |= atoi(arg) ? (ALLOW_DIRECT) : 0;
 
-        else if (strcmp(curr, "allowHTML2") == 0)
-            allowServer2 |= atoi(arg) ? (ALLOW_HTML) : 0;
-        else if (strcmp(curr, "allowBroadcast2") == 0)
-            allowServer2 |= atoi(arg) ? (ALLOW_BROADCAST) : 0;
-
         else if (strcmp(curr, "transcoding_enabled") == 0)
             servMgr->transcodingEnabled = getCGIargBOOL(arg);
         else if (strcmp(curr, "preset") == 0)
@@ -1220,7 +1092,6 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
     }
 
     servMgr->allowServer1 = allowServer1;
-    servMgr->allowServer2 = allowServer2;
 
     if (servMgr->serverHost.port != newPort)
     {
@@ -1875,10 +1746,7 @@ void Servent::handshakeCMD(HTTP& http, char *q)
 
     try
     {
-        if (cmd == "add_bcid")
-        {
-            CMD_add_bcid(query.c_str(), http, jumpStr);
-        }else if (cmd == "add_speedtest")
+        if (cmd == "add_speedtest")
         {
             CMD_add_speedtest(query.c_str(), http, jumpStr);
         }else if (cmd == "apply")
@@ -1902,9 +1770,6 @@ void Servent::handshakeCMD(HTTP& http, char *q)
         }else if (cmd == "dump_hitlists")
         {
             CMD_dump_hitlists(query.c_str(), http, jumpStr);
-        }else if (cmd == "edit_bcid")
-        {
-            CMD_edit_bcid(query.c_str(), http, jumpStr);
         }else if (cmd == "fetch")
         {
             CMD_fetch(query.c_str(), http, jumpStr);
@@ -2034,26 +1899,6 @@ void Servent::handshakeXML()
             chl = chl->next;
         }
     }
-
-#if 0
-    if (servMgr->isRoot)
-    {
-        // add private channels
-        {
-            XML::Node *pn = new XML::Node("priv_channels");
-            rn->add(pn);
-
-            ChanHitList *chl = chanMgr->hitlist;
-            while (chl)
-            {
-                if (chl->isUsed())
-                    if (chl->info.isPrivate())
-                        pn->add(createChannelXML(chl));
-                chl = chl->next;
-            }
-        }
-    }
-#endif
 
     XML::Node *hc = new XML::Node("host_cache");
     for (int i=0; i<ServMgr::MAX_HOSTCACHE; i++)
@@ -2364,6 +2209,27 @@ void Servent::handshakeICY(Channel::SRC_TYPE type, bool isHTTP)
 }
 
 // -----------------------------------
+const char* Servent::fileNameToMimeType(const String& fileName)
+{
+    if (fileName.contains(".htm"))
+        return MIME_HTML;
+    else if (fileName.contains(".css"))
+        return MIME_CSS;
+    else if (fileName.contains(".jpg"))
+        return MIME_JPEG;
+    else if (fileName.contains(".gif"))
+        return MIME_GIF;
+    else if (fileName.contains(".png"))
+        return MIME_PNG;
+    else if (fileName.contains(".js"))
+        return MIME_JS;
+    else if (fileName.contains(".ico"))
+        return MIME_ICO;
+    else
+        return nullptr;
+}
+
+// -----------------------------------
 void Servent::handshakeLocalFile(const char *fn, HTTP& http)
 {
     String fileName;
@@ -2376,7 +2242,11 @@ void Servent::handshakeLocalFile(const char *fn, HTTP& http)
     WriteBufferedStream bufferedSock(sock);
     HTML html("", bufferedSock);
 
-    if (fileName.contains(".htm"))
+    const char* mimeType = fileNameToMimeType(fileName);
+    if (mimeType == nullptr)
+        throw HTTPException(HTTP_SC_NOTFOUND, 404);
+
+    if (strcmp(mimeType, MIME_HTML) == 0)
     {
         if (str::contains(fn, "play.html"))
         {
@@ -2402,99 +2272,9 @@ void Servent::handshakeLocalFile(const char *fn, HTTP& http)
         html.writeOK(MIME_HTML);
         HTTPRequestScope scope(req);
         html.writeTemplate(fileName.cstr(), req.queryString.c_str(), scope);
-    }else if (fileName.contains(".css"))
-    {
-        html.writeRawFile(fileName.cstr(), MIME_CSS);
-    }else if (fileName.contains(".jpg"))
-    {
-        html.writeRawFile(fileName.cstr(), MIME_JPEG);
-    }else if (fileName.contains(".gif"))
-    {
-        html.writeRawFile(fileName.cstr(), MIME_GIF);
-    }else if (fileName.contains(".png"))
-    {
-        html.writeRawFile(fileName.cstr(), MIME_PNG);
-    }else if (fileName.contains(".js"))
-    {
-        html.writeRawFile(fileName.cstr(), MIME_JS);
     }else
     {
-        throw HTTPException(HTTP_SC_NOTFOUND, 404);
+        html.writeRawFile(fileName.cstr(), mimeType);
     }
 }
 
-// -----------------------------------
-void Servent::handshakeRemoteFile(const char *dirName)
-{
-    ClientSocket *rsock = sys->createSocket();
-    if (!rsock)
-        throw HTTPException(HTTP_SC_UNAVAILABLE, 503);
-
-    const char *hostName = "www.peercast.org";  // hardwired for "security"
-
-    Host host;
-    host.fromStrName(hostName, 80);
-
-    if (host.ip == 0)
-    {
-        LOG_ERROR("handshakeRemoteFile: lookup failed for %s", hostName);
-        throw HTTPException(HTTP_SC_BADGATEWAY, 502);
-    }
-
-    rsock->open(host);
-    rsock->connect();
-
-    HTTP rhttp(*rsock);
-
-    rhttp.writeLineF("GET /%s HTTP/1.0", dirName);
-    rhttp.writeLineF("%s %s", HTTP_HS_HOST, hostName);
-    rhttp.writeLineF("%s %s", HTTP_HS_CONNECTION, "close");
-    rhttp.writeLineF("%s %s", HTTP_HS_ACCEPT, "*/*");
-    rhttp.writeLine("");
-
-    String contentType;
-    bool isTemplate = false;
-    while (rhttp.nextHeader())
-    {
-        char *arg = rhttp.getArgStr();
-        if (arg)
-        {
-            if (rhttp.isHeader("content-type"))
-                contentType = arg;
-        }
-    }
-
-    MemoryStream mem(100*1024);
-    while (!rsock->eof())
-    {
-        int len=0;
-        char buf[4096];
-        len = rsock->readUpto(buf, sizeof(buf));
-        if (len == 0)
-            break;
-        else
-            mem.write(buf, len);
-    }
-    rsock->close();
-
-    int fileLen = mem.getPosition();
-    mem.len = fileLen;
-    mem.rewind();
-
-    if (contentType.contains(MIME_HTML))
-        isTemplate = true;
-
-    sock->writeLine(HTTP_SC_OK);
-    sock->writeLineF("%s %s", HTTP_HS_SERVER, PCX_AGENT);
-    sock->writeLineF("%s %s", HTTP_HS_CACHE, "no-cache");
-    sock->writeLineF("%s %s", HTTP_HS_CONNECTION, "close");
-    sock->writeLineF("%s %s", HTTP_HS_CONTENT, contentType.cstr());
-
-    sock->writeLine("");
-
-    if (isTemplate)
-    {
-        Template().readTemplate(mem, sock, 0);
-    }else
-        sock->write(mem.buf, fileLen);
-}

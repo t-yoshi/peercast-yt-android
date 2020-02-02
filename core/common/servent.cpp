@@ -23,7 +23,6 @@
 
 #include "servent.h"
 #include "sys.h"
-#include "gnutella.h"
 #include "xml.h"
 #include "html.h"
 #include "http.h"
@@ -34,6 +33,8 @@
 #include "pcp.h"
 #include "version2.h"
 #include "defer.h"
+#include "gnutella.h"
+#include "chanmgr.h"
 
 const int DIRECT_WRITE_TIMEOUT = 60;
 
@@ -154,10 +155,7 @@ bool Servent::canStream(std::shared_ptr<Channel> ch, Servent::StreamRequestDenia
 
 // -----------------------------------
 Servent::Servent(int index)
-    : outPacketsPri(MAX_OUTPACKETS)
-    , outPacketsNorm(MAX_OUTPACKETS)
-    , seenIDs(MAX_HASH)
-    , serventIndex(index)
+    : serventIndex(index)
     , sock(NULL)
     , next(NULL)
 {
@@ -242,7 +240,6 @@ void Servent::reset()
     syncPos = 0;
     addMetadata = false;
     nsSwitchNum = 0;
-    pack.func = 255;
     lastConnect = lastPing = lastPacket = 0;
 
     loginPassword.clear();
@@ -251,11 +248,6 @@ void Servent::reset()
     priorityConnect = false;
     pushSock = NULL;
     sendHeader = true;
-
-    outPacketsNorm.reset();
-    outPacketsPri.reset();
-
-    seenIDs.clear();
 
     status = S_NONE;
     type = T_NONE;
@@ -300,41 +292,6 @@ Host Servent::getHost()
         h = sock->host;
 
     return h;
-}
-
-// -----------------------------------
-bool Servent::outputPacket(GnuPacket &p, bool pri)
-{
-    lock.lock();
-
-    bool r=false;
-    if (pri)
-        r = outPacketsPri.write(p);
-    else
-    {
-        if (servMgr->useFlowControl)
-        {
-            int per = outPacketsNorm.percentFull();
-            if (per > 50)
-                flowControl = true;
-            else if (per < 25)
-                flowControl = false;
-        }
-
-        bool send=true;
-        if (flowControl)
-        {
-            // if in flowcontrol, only allow packets with less of a hop count than already in queue
-            if (p.hops >= outPacketsNorm.findMinHop())
-                send = false;
-        }
-
-        if (send)
-            r = outPacketsNorm.write(p);
-    }
-
-    lock.unlock();
-    return r;
 }
 
 // ------------------------------------------------------------------
@@ -510,184 +467,6 @@ void Servent::setStatus(STATUS s)
         if ((s == S_HANDSHAKE) || (s == S_CONNECTED) || (s == S_LISTENING))
             lastConnect = sys->getTime();
     }
-}
-
-// -----------------------------------
-void Servent::handshakeOut()
-{
-    sock->writeLine(GNU_PEERCONN);
-
-    char str[64];
-
-    sock->writeLineF("%s %s", HTTP_HS_AGENT, PCX_AGENT);
-    sock->writeLineF("%s %d", PCX_HS_PCP, 1);
-
-    if (priorityConnect)
-        sock->writeLineF("%s %d", PCX_HS_PRIORITY, 1);
-
-    if (networkID.isSet())
-    {
-        networkID.toStr(str);
-        sock->writeLineF("%s %s", PCX_HS_NETWORKID, str);
-    }
-
-    servMgr->sessionID.toStr(str);
-    sock->writeLineF("%s %s", PCX_HS_ID, str);
-
-    sock->writeLineF("%s %s", PCX_HS_OS, peercastApp->getClientTypeOS());
-
-    sock->writeLine("");
-
-    HTTP http(*sock);
-
-    int r = http.readResponse();
-
-    if (r != 200)
-    {
-        LOG_ERROR("Expected 200, got %d", r);
-        throw StreamException("Unexpected HTTP response");
-    }
-
-    bool versionValid = false;
-
-    GnuID clientID;
-
-    while (http.nextHeader())
-    {
-        LOG_DEBUG("%s", http.cmdLine);
-
-        char *arg = http.getArgStr();
-        if (!arg)
-            continue;
-
-        if (http.isHeader(HTTP_HS_AGENT))
-        {
-            agent.set(arg);
-
-            if (Sys::strnicmp(arg, "PeerCast/", 9)==0)
-                versionValid = (Sys::stricmp(arg+9, MIN_CONNECTVER)>=0);
-        }else if (http.isHeader(PCX_HS_NETWORKID))
-            clientID.fromStr(arg);
-    }
-
-    if (!clientID.isSame(networkID))
-        throw HTTPException(HTTP_SC_UNAVAILABLE, 503);
-
-    if (!versionValid)
-        throw HTTPException(HTTP_SC_UNAUTHORIZED, 401);
-
-    sock->writeLine(GNU_OK);
-    sock->writeLine("");
-}
-
-// -----------------------------------
-void Servent::processOutChannel()
-{
-}
-
-// -----------------------------------
-void Servent::handshakeIn()
-{
-    int osType=0;
-
-    HTTP http(*sock);
-
-    bool versionValid = false;
-    bool diffRootVer = false;
-
-    GnuID clientID;
-
-    while (http.nextHeader())
-    {
-        LOG_DEBUG("%s", http.cmdLine);
-
-        char *arg = http.getArgStr();
-        if (!arg)
-            continue;
-
-        if (http.isHeader(HTTP_HS_AGENT))
-        {
-            agent.set(arg);
-
-            if (Sys::strnicmp(arg, "PeerCast/", 9)==0)
-            {
-                versionValid = (Sys::stricmp(arg+9, MIN_CONNECTVER)>=0);
-                diffRootVer = Sys::stricmp(arg+9, MIN_ROOTVER)<0;
-            }
-        }else if (http.isHeader(PCX_HS_NETWORKID))
-        {
-            clientID.fromStr(arg);
-        }else if (http.isHeader(PCX_HS_PRIORITY))
-        {
-            priorityConnect = atoi(arg)!=0;
-        }else if (http.isHeader(PCX_HS_ID))
-        {
-            GnuID id;
-            id.fromStr(arg);
-            if (id.isSame(servMgr->sessionID))
-                throw StreamException("Servent loopback");
-        }else if (http.isHeader(PCX_HS_OS))
-        {
-            if (Sys::stricmp(arg, PCX_OS_LINUX)==0)
-                osType = 1;
-            else if (Sys::stricmp(arg, PCX_OS_WIN32)==0)
-                osType = 2;
-            else if (Sys::stricmp(arg, PCX_OS_MACOSX)==0)
-                osType = 3;
-            else if (Sys::stricmp(arg, PCX_OS_WINAMP2)==0)
-                osType = 4;
-        }
-    }
-
-    if (!clientID.isSame(networkID))
-        throw HTTPException(HTTP_SC_UNAVAILABLE, 503);
-
-    // if this is a priority connection and all incoming connections
-    // are full then kill an old connection to make room. Otherwise reject connection.
-    //if (!priorityConnect)
-    {
-        if (!isPrivate())
-            if (servMgr->pubInFull())
-                throw HTTPException(HTTP_SC_UNAVAILABLE, 503);
-    }
-
-    if (!versionValid)
-        throw HTTPException(HTTP_SC_FORBIDDEN, 403);
-
-    sock->writeLine(GNU_OK);
-
-    sock->writeLineF("%s %s", HTTP_HS_AGENT, PCX_OLDAGENT);
-
-    if (networkID.isSet())
-    {
-        sock->writeLineF("%s %s", PCX_HS_NETWORKID, networkID.str().c_str());
-    }
-
-    if (servMgr->isRoot)
-    {
-        sock->writeLineF("%s %d", PCX_HS_FLOWCTL, servMgr->useFlowControl?1:0);
-        sock->writeLineF("%s %d", PCX_HS_MINBCTTL, chanMgr->minBroadcastTTL);
-        sock->writeLineF("%s %d", PCX_HS_MAXBCTTL, chanMgr->maxBroadcastTTL);
-        sock->writeLineF("%s %d", PCX_HS_RELAYBC, servMgr->relayBroadcast);
-        //sock->writeLine("%s %d", PCX_HS_FULLHIT, 2);
-
-        if (diffRootVer)
-        {
-            sock->writeString(PCX_HS_DL);
-            sock->writeLine(PCX_DL_URL);
-        }
-
-        sock->writeLineF("%s %s", PCX_HS_MSG, servMgr->rootMsg.cstr());
-    }
-
-    char hostIP[64];
-    Host h = sock->host;
-    h.IPtoStr(hostIP);
-    sock->writeLineF("%s %s", PCX_HS_REMOTEIP, hostIP);
-
-    sock->writeLine("");
-
-    while (http.nextHeader());
 }
 
 // -----------------------------------
@@ -1211,264 +990,6 @@ void Servent::handshakeGiv(GnuID &id)
     sock->writeLine("");
 }
 
-// -----------------------------------
-void Servent::processGnutella()
-{
-    type = T_PGNU;
-
-    //if (servMgr->isRoot && !servMgr->needConnections())
-    if (servMgr->isRoot)
-    {
-        processRoot();
-        return;
-    }
-
-    gnuStream.init(sock);
-    setStatus(S_CONNECTED);
-
-    if (!servMgr->isRoot)
-    {
-        chanMgr->broadcastRelays(this, 1, 1);
-        GnuPacket *p;
-
-        if ((p=outPacketsNorm.curr()))
-            gnuStream.sendPacket(*p);
-        return;
-    }
-
-    gnuStream.ping(2);
-
-//  if (type != T_LOOKUP)
-//      chanMgr->broadcastRelays(this, chanMgr->minBroadcastTTL, 2);
-
-    lastPacket = lastPing = sys->getTime();
-    bool doneBigPing=false;
-
-    const unsigned int  abortTimeoutSecs = 60;      // abort connection after 60 secs of no activitiy
-    const unsigned int  packetTimeoutSecs = 30;     // ping connection after 30 secs of no activity
-
-    unsigned int currBytes=0;
-    unsigned int lastWait=0;
-
-    unsigned int lastTotalIn=0, lastTotalOut=0;
-
-    while (thread.active() && sock->active())
-    {
-        if (sock->readReady())
-        {
-            lastPacket = sys->getTime();
-
-            if (gnuStream.readPacket(pack))
-            {
-                char ipstr[64];
-                sock->host.toStr(ipstr);
-
-                GnuID routeID;
-                GnuStream::R_TYPE ret = GnuStream::R_PROCESS;
-
-                if (pack.func != GNU_FUNC_PONG)
-                    if (servMgr->seenPacket(pack))
-                        ret = GnuStream::R_DUPLICATE;
-
-                seenIDs.add(pack.id);
-
-                if (ret == GnuStream::R_PROCESS)
-                {
-                    GnuID routeID;
-                    ret = gnuStream.processPacket(pack, this, routeID);
-
-                    if (flowControl && (ret == GnuStream::R_BROADCAST))
-                        ret = GnuStream::R_DROP;
-                }
-
-                switch(ret)
-                {
-                    case GnuStream::R_BROADCAST:
-                        if (servMgr->broadcast(pack, this))
-                            stats.add(Stats::NUMBROADCASTED);
-                        else
-                            stats.add(Stats::NUMDROPPED);
-                        break;
-                    case GnuStream::R_ROUTE:
-                        if (servMgr->route(pack, routeID, NULL))
-                            stats.add(Stats::NUMROUTED);
-                        else
-                            stats.add(Stats::NUMDROPPED);
-                        break;
-                    case GnuStream::R_ACCEPTED:
-                        stats.add(Stats::NUMACCEPTED);
-                        break;
-                    case GnuStream::R_DUPLICATE:
-                        stats.add(Stats::NUMDUP);
-                        break;
-                    case GnuStream::R_DEAD:
-                        stats.add(Stats::NUMDEAD);
-                        break;
-                    case GnuStream::R_DISCARD:
-                        stats.add(Stats::NUMDISCARDED);
-                        break;
-                    case GnuStream::R_BADVERSION:
-                        stats.add(Stats::NUMOLD);
-                        break;
-                    case GnuStream::R_DROP:
-                        stats.add(Stats::NUMDROPPED);
-                        break;
-                }
-
-                LOG_INFO("packet in: %s-%s, %d bytes, %d hops, %d ttl, from %s", GNU_FUNC_STR(pack.func), GnuStream::getRouteStr(ret), pack.len, pack.hops, pack.ttl, ipstr);
-            }else
-            {
-                LOG_ERROR("Bad packet");
-            }
-        }
-
-        GnuPacket *p;
-
-        if ((p=outPacketsPri.curr()))               // priority packet
-        {
-            gnuStream.sendPacket(*p);
-            seenIDs.add(p->id);
-            outPacketsPri.next();
-        }else if ((p=outPacketsNorm.curr()))       // or.. normal packet
-        {
-            gnuStream.sendPacket(*p);
-            seenIDs.add(p->id);
-            outPacketsNorm.next();
-        }
-
-        int lpt =  sys->getTime()-lastPacket;
-
-        if (!doneBigPing)
-        {
-            if ((sys->getTime()-lastPing) > 15)
-            {
-                gnuStream.ping(7);
-                lastPing = sys->getTime();
-                doneBigPing = true;
-            }
-        }else
-        {
-            if (lpt > packetTimeoutSecs)
-            {
-                if ((sys->getTime()-lastPing) > packetTimeoutSecs)
-                {
-                    gnuStream.ping(1);
-                    lastPing = sys->getTime();
-                }
-            }
-        }
-        if (lpt > abortTimeoutSecs)
-            throw TimeoutException();
-
-        unsigned int totIn = sock->totalBytesIn() - lastTotalIn;
-        unsigned int totOut = sock->totalBytesOut() - lastTotalOut;
-
-        unsigned int bytes = totIn+totOut;
-
-        lastTotalIn = sock->totalBytesIn();
-        lastTotalOut = sock->totalBytesOut();
-
-        const int serventBandwidth = 1000;
-
-        int delay = sys->idleSleepTime;
-        if ((bytes) && (serventBandwidth >= 8))
-            delay = (bytes*1000)/(serventBandwidth/8);  // set delay relative packetsize
-
-        if (delay < (int)sys->idleSleepTime)
-            delay = sys->idleSleepTime;
-        //LOG("delay %d, in %d, out %d", delay, totIn, totOut);
-
-        sys->sleep(delay);
-    }
-}
-
-// -----------------------------------
-void Servent::processRoot()
-{
-    try
-    {
-        gnuStream.init(sock);
-        setStatus(S_CONNECTED);
-
-        gnuStream.ping(2);
-
-        unsigned int lastConnect = sys->getTime();
-
-        while (thread.active() && sock->active())
-        {
-            if (gnuStream.readPacket(pack))
-            {
-                char ipstr[64];
-                sock->host.toStr(ipstr);
-
-                LOG_INFO("packet in: %d from %s", pack.func, ipstr);
-
-                if (pack.func == GNU_FUNC_PING)     // if ping then pong back some hosts and close
-                {
-                    Host hl[32];
-                    int cnt = servMgr->getNewestServents(hl, 32, sock->host);
-                    if (cnt)
-                    {
-                        int start = sys->rnd() % cnt;
-                        int max = cnt>8?8:cnt;
-
-                        for (int i=0; i<max; i++)
-                        {
-                            GnuPacket pong;
-                            pack.hops = 1;
-                            pong.initPong(hl[start], false, pack);
-                            gnuStream.sendPacket(pong);
-
-                            char ipstr[64];
-                            hl[start].toStr(ipstr);
-
-                            //LOG_INFO("Pong %d: %s", start+1, ipstr);
-                            start = (start+1) % cnt;
-                        }
-                        char str[64];
-                        sock->host.toStr(str);
-                        LOG_INFO("Sent %d pong(s) to %s", max, str);
-                    }else
-                    {
-                        LOG_INFO("No Pongs to send");
-                        //return;
-                    }
-                }else if (pack.func == GNU_FUNC_PONG)       // pong?
-                {
-                    MemoryStream pong(pack.data, pack.len);
-
-                    int ip, port;
-                    port = pong.readShort();
-                    ip = pong.readLong();
-                    ip = SWAP4(ip);
-
-                    Host h(ip, port);
-                    if ((ip) && (port) && (h.globalIP()))
-                    {
-                        LOG_INFO("added pong: %d.%d.%d.%d:%d", ip>>24&0xff, ip>>16&0xff, ip>>8&0xff, ip&0xff, port);
-                        servMgr->addHost(h, ServHost::T_SERVENT, sys->getTime());
-                    }
-                    //return;
-                }else if (pack.func == GNU_FUNC_HIT)
-                {
-                    MemoryStream data(pack.data, pack.len);
-                    ChanHit hit;
-                    gnuStream.readHit(data, hit, pack.hops, pack.id);
-                }
-
-                //if (gnuStream.packetsIn > 5)  // die if we get too many packets
-                //  return;
-            }
-
-            if ((sys->getTime()-lastConnect > 60))
-                break;
-        }
-    }catch (StreamException &e)
-    {
-        LOG_ERROR("Relay: %s", e.msg);
-    }
-}
-
 // ------------------------------------------------------------------
 // Pushリレーサーバントのメインプロシージャ。こちらからリモートホスト
 // へ接続に行くが、その後は着信したかのように振る舞い、要求を受け付け
@@ -1686,23 +1207,6 @@ void Servent::handshakeIncomingPCP(AtomStream &atom, Host &rhost, GnuID &rid, St
         rhost.port = pingPort;
         if (!rhost.globalIP() || !pingHost(rhost, rid))
             rhost.port = 0;
-    }
-
-    if (servMgr->isRoot)
-    {
-        if (bcID.isSet())
-        {
-            if (bcID.getFlags() & 1)    // private
-            {
-                BCID *bcid = servMgr->findValidBCID(bcID);
-                if (!bcid || (bcid && !bcid->valid))
-                {
-                    atom.writeParent(PCP_OLEH, 1);
-                    atom.writeInt(PCP_HELO_DISABLE, 1);
-                    throw StreamException("Client is banned");
-                }
-            }
-        }
     }
 
     atom.writeParent(PCP_OLEH, 5);
@@ -2094,19 +1598,6 @@ int Servent::incomingProc(ThreadInfo *thread)
     }
 
     return 0;
-}
-
-// -----------------------------------
-void Servent::processServent()
-{
-    setStatus(S_HANDSHAKE);
-
-    handshakeIn();
-
-    if (!sock)
-        throw StreamException("Servent has no socket");
-
-    processGnutella();
 }
 
 // -----------------------------------
@@ -2580,9 +2071,9 @@ int Servent::serverProc(ThreadInfo *thread)
         sv->setStatus(S_LISTENING);
 
         if (servMgr->isRoot)
-            LOG_DEBUG("Root Server started: %s", sv->sock->host.str().c_str());
+            LOG_INFO("Root Server started: %s", sv->sock->host.str().c_str());
         else
-            LOG_DEBUG("Server started: %s", sv->sock->host.str().c_str());
+            LOG_INFO("Server started: %s", sv->sock->host.str().c_str());
 
         while (thread->active() && sv->sock->active())
         {
@@ -2622,7 +2113,7 @@ int Servent::serverProc(ThreadInfo *thread)
         LOG_ERROR("Server Error: %s:%d", e.msg, e.err);
     }
 
-    LOG_DEBUG("Server stopped: %s", sv->sock->host.str().c_str());
+    LOG_INFO("Server stopped: %s", sv->sock->host.str().c_str());
 
     return 0;
 }
@@ -2672,38 +2163,6 @@ bool    Servent::writeVariable(Stream &s, const String &var)
     }else if (var == "isPrivate")
     {
         buf = std::to_string(isPrivate());
-    }else if (var.startsWith("gnet."))
-    {
-        float ctime = (float)(sys->getTime() - lastConnect);
-        if (var == "gnet.packetsIn")
-            buf = str::format("%d", gnuStream.packetsIn);
-        else if (var == "gnet.packetsInPerSec")
-            buf = str::format("%.1f", ctime>0 ? (float)gnuStream.packetsIn/ctime : 0);
-        else if (var == "gnet.packetsOut")
-            buf = str::format("%d", gnuStream.packetsOut);
-        else if (var == "gnet.packetsOutPerSec")
-            buf = str::format("%.1f", ctime>0 ? (float)gnuStream.packetsOut/ctime : 0);
-        else if (var == "gnet.normQueue")
-            buf = str::format("%d", outPacketsNorm.numPending());
-        else if (var == "gnet.priQueue")
-            buf = str::format("%d", outPacketsPri.numPending());
-        else if (var == "gnet.flowControl")
-            buf = str::format("%d", flowControl?1:0);
-        else if (var == "gnet.routeTime")
-        {
-            int nr = seenIDs.numUsed();
-            unsigned int tim = sys->getTime() - seenIDs.getOldest();
-
-            String tstr;
-            tstr.setFromStopwatch(tim);
-
-            if (nr)
-                buf = tstr.c_str();
-            else
-                buf = "-";
-        }
-        else
-            return false;
     }else
         return false;
 

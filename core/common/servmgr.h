@@ -24,28 +24,18 @@
 #include "varwriter.h"
 #include "rtmpmonit.h"
 #include "inifile.h"
+#include "servfilter.h"
+#include "chanmgr.h"
+
+// ----------------------------------
+
+static const int DEFAULT_PORT   = 7144;
 
 // ----------------------------------
 
 const int MIN_YP_RETRY = 20;
 const int MIN_TRACKER_RETRY = 10;
 const int MIN_RELAY_RETRY = 5;
-
-// ----------------------------------
-class BCID : public VariableWriter
-{
-public:
-    BCID()
-    :next(0), valid(true)
-    {}
-
-    bool    writeVariable(Stream &, const String &) override;
-
-    GnuID   id;
-    String  name, email, url;
-    bool    valid;
-    BCID    *next;
-};
 
 // ----------------------------------
 class ServHost
@@ -84,31 +74,6 @@ public:
     TYPE            type;
     Host            host;
     unsigned int    time;
-};
-
-// ----------------------------------
-class ServFilter : public VariableWriter
-{
-public:
-    enum
-    {
-        F_PRIVATE  = 0x01,
-        F_BAN      = 0x02,
-        F_NETWORK  = 0x04,
-        F_DIRECT   = 0x08
-    };
-
-    ServFilter() { init(); }
-    void    init()
-    {
-        flags = 0;
-        host.init();
-    }
-    bool    writeVariable(Stream &, const String &) override;
-    bool    matches(int fl, const Host& h) const;
-
-    Host host;
-    unsigned int flags;
 };
 
 // ----------------------------------
@@ -181,21 +146,17 @@ public:
 
     unsigned int        totalConnected()
     {
-        //return numConnected(Servent::T_OUTGOING) + numConnected(Servent::T_INCOMING);
         return numConnected();
     }
     bool                isFiltered(int, Host &h);
     bool                hasUnsafeFilterSettings();
-    bool                addOutgoing(Host, GnuID &, bool);
+
     Servent             *findConnection(Servent::TYPE, GnuID &);
 
     static THREAD_PROC  serverProc(ThreadInfo *);
     static THREAD_PROC  clientProc(ThreadInfo *);
     static THREAD_PROC  trackerProc(ThreadInfo *);
     static THREAD_PROC  idleProc(ThreadInfo *);
-
-    int                 broadcast(GnuPacket &, Servent * = NULL);
-    int                 route(GnuPacket &, GnuID &, Servent * = NULL);
 
     XML::Node           *createServentXML();
 
@@ -210,7 +171,6 @@ public:
     // host cache
     void            addHost(Host &, ServHost::TYPE, unsigned int);
     int             getNewestServents(Host *, int, Host &);
-    ServHost        getOutgoingServent(GnuID &);
     void            deadHost(Host &, ServHost::TYPE);
     unsigned int    numHosts(ServHost::TYPE);
     void            clearHostCache(ServHost::TYPE);
@@ -237,17 +197,10 @@ public:
 
     int             broadcastPacket(ChanPacket &, GnuID &, GnuID &, GnuID &, Servent::TYPE type);
 
-    void            addValidBCID(BCID *);
-    void            removeValidBCID(GnuID &);
-    BCID            *findValidBCID(GnuID &);
-    BCID            *findValidBCID(int);
-
     unsigned int    getUptime()
     {
         return sys->getTime()-startTime;
     }
-
-    bool    seenPacket(GnuPacket &);
 
     bool    needHosts()
     {
@@ -258,47 +211,9 @@ public:
     unsigned int    numActiveOnPort(int);
     unsigned int    numActive(Servent::TYPE);
 
-    bool    needConnections()
-    {
-        return numConnected(Servent::T_PGNU, 60) < minGnuIncoming;
-    }
-    bool    tryFull()
-    {
-        return false;
-        //return maxTryout ? numUsed(Servent::T_OUTGOING) > maxTryout: false;
-    }
-
-    bool    pubInOver()
-    {
-        return numConnected(Servent::T_PGNU) > maxGnuIncoming;
-//      return maxIncoming ? numConnected(Servent::T_INCOMING, false) > maxIncoming : false;
-    }
-    bool    pubInFull()
-    {
-        return numConnected(Servent::T_PGNU) >= maxGnuIncoming;
-//      return maxIncoming ? numConnected(Servent::T_INCOMING, false) >= maxIncoming : false;
-    }
-
-    bool    outUsedFull()
-    {
-        return false;
-//      return maxOutgoing ? numUsed(Servent::T_OUTGOING) >= maxOutgoing: false;
-    }
-    bool    outOver()
-    {
-        return false;
-//      return maxOutgoing ? numConnected(Servent::T_OUTGOING) > maxOutgoing : false;
-    }
-
     bool    controlInFull()
     {
         return numConnected(Servent::T_CIN)>=maxControl;
-    }
-
-    bool    outFull()
-    {
-        return false;
-//      return maxOutgoing ? numConnected(Servent::T_OUTGOING) >= maxOutgoing : false;
     }
 
     bool    relaysFull()
@@ -333,10 +248,7 @@ public:
 
     char                password[64];
 
-    bool                allowGnutella;
-
     unsigned int        maxBitrateOut, maxControl, maxRelays, maxDirect;
-    unsigned int        minGnuIncoming, maxGnuIncoming;
     unsigned int        maxServIn;
 
     bool                isDisabled;
@@ -362,9 +274,8 @@ public:
     bool                restartServer;
     bool                allowDirect;
     bool                autoConnect, autoServe, forceLookup;
-    int                 queryTTL;
 
-    unsigned int        allowServer1, allowServer2;
+    unsigned int        allowServer1;
     unsigned int        startTime;
     unsigned int        tryoutDelay;
     unsigned int        refreshHTML;
@@ -372,7 +283,6 @@ public:
 
     unsigned int        notifyMask;
 
-    BCID                *validBCID;
     GnuID               sessionID;
 
     ServFilter          filters[MAX_FILTERS];
@@ -389,7 +299,6 @@ public:
 
     const std::unique_ptr<class ChannelDirectory>
                         channelDirectory;
-    bool                publicDirectoryEnabled;
 
     const std::unique_ptr<class UptestServiceRegistry>
                         uptestServiceRegistry;

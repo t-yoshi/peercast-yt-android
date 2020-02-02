@@ -23,7 +23,6 @@
 // ----------------------------------
 #include "socket.h"
 #include "sys.h"
-#include "gnutella.h"
 #include "channel.h"
 #include "http.h"
 #include "pcp.h"
@@ -32,7 +31,6 @@
 #include "varwriter.h"
 
 class HTML;
-
 class AtomStream;
 
 // ----------------------------------
@@ -56,7 +54,6 @@ public:
         T_DIRECT,           // Outgoing direct connection
         T_COUT,             // PCP out connection
         T_CIN,              // PCP in connection
-        T_PGNU              // old protocol connection
     };
 
     enum STATUS
@@ -75,13 +72,6 @@ public:
         S_WAIT,
         S_FREE
     };
-
-    // enum PROTOCOL
-    // {
-    //     P_UNKNOWN,
-    //     P_GNUTELLA06,
-    //     P_PCP
-    // };
 
     enum SORT
     {
@@ -136,6 +126,8 @@ public:
             }
         }
 
+    static const char* fileNameToMimeType(const String& fileName);
+
     Servent(int);
     ~Servent();
 
@@ -170,8 +162,6 @@ public:
     static THREAD_PROC  outgoingProc(ThreadInfo *);
     static THREAD_PROC  incomingProc(ThreadInfo *);
     static THREAD_PROC  givProc(ThreadInfo *);
-    static THREAD_PROC  pcpProc(ThreadInfo *);
-    static THREAD_PROC  fetchProc(ThreadInfo *);
 
     static bool pingHost(Host &, GnuID &);
 
@@ -184,13 +174,8 @@ public:
     void    handshakeXML();
     void    handshakeCMD(HTTP&, char *);
     bool    handshakeAuth(HTTP &, const char *, bool);
-    void    handshakeIn();
-    void    handshakeOut();
 
     bool    handshakeHTTPBasicAuth(HTTP &http);
-
-    void    processOutPCP();
-    void    processOutChannel();
 
     bool    handshakeStream(ChanInfo &);
     void    handshakeStream_readHeaders(bool& gotPCP, unsigned int& reqPos, int& nsSwitchNum);
@@ -216,7 +201,6 @@ public:
 
     void    handshakeJRPC(HTTP &http);
 
-    void    handshakeRemoteFile(const char *);
     void    handshakeLocalFile(const char *, HTTP& http);
     void    invokeCGIScript(HTTP &http, const char* fn);
 
@@ -231,16 +215,7 @@ public:
     bool    writeVariable(Stream &, const String &) override;
 
     // the "mainloop" of servents
-    void    processGnutella();
-    void    processRoot();
-    void    processServent();
     void    processStream(bool, ChanInfo &);
-    void    processPCP(bool, bool);
-
-    bool    procAtoms(AtomStream &);
-    void    procRootAtoms(AtomStream &, int);
-    void    procHeloAtoms(AtomStream &, int, bool);
-    void    procGetAtoms(AtomStream &, int);
 
     void    triggerChannel(char *, ChanInfo::PROTOCOL, bool);
     void    sendPeercastChannel();
@@ -266,8 +241,6 @@ public:
 
     Host    getHost();
 
-    bool    outputPacket(GnuPacket &, bool);
-    bool    hasSeenPacket(GnuPacket &p) { return seenIDs.contains(p.id); }
     bool    acceptGIV(ClientSocket *);
     bool    sendPacket(ChanPacket &, GnuID &, GnuID &, GnuID &, Servent::TYPE);
 
@@ -284,12 +257,9 @@ public:
     std::atomic<STATUS> status;
 
     static const char   *statusMsgs[], *typeMsgs[];
-    GnuStream           gnuStream;
-    GnuPacket           pack;
     unsigned int        lastConnect, lastPing, lastPacket;
     String              agent;
 
-    GnuIDList           seenIDs;
     GnuID               networkID;
     const int           serventIndex;
 
@@ -317,8 +287,6 @@ public:
 
     ChanInfo::PROTOCOL  outputProtocol;
 
-    GnuPacketBuffer     outPacketsNorm, outPacketsPri;
-
     bool                flowControl;
 
     Servent             *next;
@@ -327,7 +295,6 @@ public:
     Cookie              cookie;
 
 private:
-    void CMD_add_bcid(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_add_speedtest(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_apply(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_bump(const char* cmd, HTTP& http, String& jumpStr);
@@ -336,7 +303,6 @@ private:
     void CMD_control_rtmp(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_delete_speedtest(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_dump_hitlists(const char* cmd, HTTP& http, String& jumpStr);
-    void CMD_edit_bcid(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_fetch(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_fetch_feeds(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_keep(const char* cmd, HTTP& http, String& jumpStr);

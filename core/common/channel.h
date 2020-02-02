@@ -21,7 +21,6 @@
 
 #include "sys.h"
 #include "stream.h"
-#include "gnutella.h"
 #include "xml.h"
 #include "asf.h"
 #include "cstream.h"
@@ -296,7 +295,5 @@ public:
 
     std::shared_ptr<Channel> next;
 };
-
-#include "chanmgr.h"
 
 #endif
