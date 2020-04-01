@@ -224,7 +224,7 @@ void Servent::invokeCGIScript(HTTP &http, const char* fn)
     HTTPHeaders headers;
     int statusCode = 200;
     try {
-        Regexp headerPattern("\\A([A-Za-z\\-]+):\\s*(.*)\\z");
+        Regexp headerPattern("^([A-Za-z\\-]+):\\s*(.*)$");
         std::string line;
         while ((line = stream.readLine(8192)) != "")
         {
@@ -940,9 +940,7 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
 
     bool brRoot = false;
     bool getUpd = false;
-    int showLog = 0;
     int allowServer1 = 0;
-    int allowServer2 = 0;
     int newPort = servMgr->serverHost.port;
 
     char arg[MAX_CGI_LEN];
@@ -1637,7 +1635,7 @@ void Servent::CMD_add_speedtest(const char* cmd, HTTP& http, String& jumpStr)
 
 static bool isDecimal(const std::string& str)
 {
-    static const Regexp decimal("\\A(0|[1-9][0-9]*)\\z");
+    static const Regexp decimal("^(0|[1-9][0-9]*)$");
     return decimal.matches(str);
 }
 
@@ -2250,6 +2248,9 @@ void Servent::handshakeLocalFile(const char *fn, HTTP& http)
     {
         if (str::contains(fn, "play.html"))
         {
+            // 視聴ページだった場合はあらかじめチャンネルのリレーを開
+            // 始しておく。
+
             auto vec = str::split(fn, "?");
             if (vec.size() != 2)
                 throw HTTPException(HTTP_SC_BADREQUEST, 400);

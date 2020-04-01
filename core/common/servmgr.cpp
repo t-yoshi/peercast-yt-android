@@ -34,10 +34,10 @@
 
 // -----------------------------------
 ServMgr::ServMgr()
-    : rtmpServerMonitor(std::string(peercastApp->getPath()) + "rtmp-server")
+    : relayBroadcast(30) // オリジナルでは未初期化。
     , channelDirectory(new ChannelDirectory())
     , uptestServiceRegistry(new UptestServiceRegistry())
-    , relayBroadcast(30) // オリジナルでは未初期化。
+    , rtmpServerMonitor(std::string(peercastApp->getPath()) + "rtmp-server")
 {
     authType = AUTH_COOKIE;
     cookieList.init();
@@ -328,7 +328,7 @@ Servent *ServMgr::findOldestServent(Servent::TYPE type, bool priv)
 }
 
 // -----------------------------------
-Servent *ServMgr::findServent(Servent::TYPE type, Host &host, GnuID &netid)
+Servent *ServMgr::findServent(Servent::TYPE type, Host &host, const GnuID &netid)
 {
     std::lock_guard<std::recursive_mutex> cs(lock);
 
@@ -350,7 +350,7 @@ Servent *ServMgr::findServent(Servent::TYPE type, Host &host, GnuID &netid)
 }
 
 // -----------------------------------
-Servent *ServMgr::findServent(unsigned int ip, unsigned short port, GnuID &netid)
+Servent *ServMgr::findServent(unsigned int ip, unsigned short port, const GnuID &netid)
 {
     std::lock_guard<std::recursive_mutex> cs(lock);
 
@@ -570,6 +570,8 @@ unsigned int ServMgr::numActive(Servent::TYPE tp)
     Servent *s = servents;
     while (s)
     {
+        std::lock_guard<std::recursive_mutex> cs(s->lock);
+
         if (s->thread.active() && s->sock && (s->type == tp))
             cnt++;
         s = s->next;
@@ -801,6 +803,9 @@ void ServMgr::saveSettings(const char *fn)
 // --------------------------------------------------
 void ServMgr::doSaveSettings(IniFileBase& iniFile)
 {
+    std::lock_guard<std::recursive_mutex> cs1(lock);
+    std::lock_guard<std::recursive_mutex> cs2(chanMgr->lock);
+
     iniFile.writeSection("Server");
     iniFile.writeStrValue("serverName", this->serverName);
     iniFile.writeIntValue("serverPort", this->serverHost.port);
@@ -1232,7 +1237,7 @@ void ServMgr::loadSettings(const char *fn)
 }
 
 // --------------------------------------------------
-unsigned int ServMgr::numStreams(GnuID &cid, Servent::TYPE tp, bool all)
+unsigned int ServMgr::numStreams(const GnuID &cid, Servent::TYPE tp, bool all)
 {
     std::lock_guard<std::recursive_mutex> cs(lock);
 
@@ -1319,7 +1324,7 @@ bool ServMgr::getChannel(char *str, ChanInfo &info, bool relay)
 }
 
 // --------------------------------------------------
-Servent *ServMgr::findConnection(Servent::TYPE t, GnuID &sid)
+Servent *ServMgr::findConnection(Servent::TYPE t, const GnuID &sid)
 {
     std::lock_guard<std::recursive_mutex> cs(lock);
 
@@ -1491,7 +1496,7 @@ bool    ServMgr::acceptGIV(ClientSocket *sock)
 }
 
 // -----------------------------------
-int ServMgr::broadcastPushRequest(ChanHit &hit, Host &to, GnuID &chanID, Servent::TYPE type)
+int ServMgr::broadcastPushRequest(ChanHit &hit, Host &to, const GnuID &chanID, Servent::TYPE type)
 {
     ChanPacket pack;
     MemoryStream pmem(pack.data, sizeof(pack.data));
@@ -1515,9 +1520,7 @@ int ServMgr::broadcastPushRequest(ChanHit &hit, Host &to, GnuID &chanID, Servent
     pack.len = pmem.pos;
     pack.type = ChanPacket::T_PCP;
 
-    GnuID noID;
-
-    return servMgr->broadcastPacket(pack, noID, servMgr->sessionID, hit.sessionID, type);
+    return servMgr->broadcastPacket(pack, GnuID(), servMgr->sessionID, hit.sessionID, type);
 }
 
 // --------------------------------------------------
@@ -1556,14 +1559,12 @@ void ServMgr::broadcastRootSettings(bool getUpdate)
         mem.rewind();
         pack.len = mem.len;
 
-        GnuID noID;
-
-        broadcastPacket(pack, noID, servMgr->sessionID, noID, Servent::T_CIN);
+        broadcastPacket(pack, GnuID(), servMgr->sessionID, GnuID(), Servent::T_CIN);
     }
 }
 
 // --------------------------------------------------
-int ServMgr::broadcastPacket(ChanPacket &pack, GnuID &chanID, GnuID &srcID, GnuID &destID, Servent::TYPE type)
+int ServMgr::broadcastPacket(ChanPacket &pack, const GnuID &chanID, const GnuID &srcID, const GnuID &destID, Servent::TYPE type)
 {
     std::lock_guard<std::recursive_mutex> cs(lock);
 
@@ -1601,8 +1602,7 @@ int ServMgr::idleProc(ThreadInfo *thread)
             {
                 if (servMgr->checkForceIP())
                 {
-                    GnuID noID;
-                    chanMgr->broadcastTrackerUpdate(noID, true);
+                    chanMgr->broadcastTrackerUpdate(GnuID(), true);
                 }
                 lastForceIPCheck = ctime;
             }
@@ -1619,14 +1619,6 @@ int ServMgr::idleProc(ThreadInfo *thread)
 
         if (servMgr->isRoot)
         {
-            // 1時間着信がなかったら終了する。…なぜ？
-            if ((servMgr->lastIncoming) && (((int64_t)ctime - servMgr->lastIncoming) > 60*60))
-            {
-                peercastInst->saveSettings();
-                peercastInst->quit();
-                sys->exit();
-            }
-
             if ((ctime - lastRootBroadcast) > chanMgr->hostUpdateInterval)
             {
                 servMgr->broadcastRootSettings(true);
@@ -1634,11 +1626,7 @@ int ServMgr::idleProc(ThreadInfo *thread)
             }
         }
 
-        // デッドヒットをクリアする。オリジナルはトラッカーをクリアす
-        // るが、開くチャンネルがこのサーバーに設定されている YP に掲
-        // 載されているとは限らないので、トラッカーが消えると再び開く
-        // ことができないので、トラッカーを残す。
-        chanMgr->clearDeadHits(false);
+        chanMgr->clearDeadHits(true);
 
         if (servMgr->shutdownTimer)
         {

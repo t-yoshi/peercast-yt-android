@@ -130,6 +130,8 @@ public:
 
     Stat getStatistics()
     {
+        std::lock_guard<std::recursive_mutex> cs_(lock);
+
         if (writePos == 0)
             return { {}, 0, 0 };
 
@@ -159,8 +161,8 @@ class ChannelStream
 {
 public:
     ChannelStream()
-    : numListeners(0)
-    , numRelays(0)
+    : numRelays(0)
+    , numListeners(0)
     , isPlaying(false)
     , fwState(0)
     , lastUpdate(0)
@@ -172,7 +174,7 @@ public:
     bool getStatus(std::shared_ptr<Channel>, ChanPacket &);
 
     virtual void kill() {}
-    virtual bool sendPacket(ChanPacket &, GnuID &) { return false; }
+    virtual bool sendPacket(ChanPacket &, const GnuID &) { return false; }
     virtual void flush(Stream &) {}
     virtual void readHeader(Stream &, std::shared_ptr<Channel>) = 0;
     virtual int  readPacket(Stream &, std::shared_ptr<Channel>) = 0;

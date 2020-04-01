@@ -22,7 +22,7 @@
 #include "version2.h"
 
 // ------------------------------------------
-void PCPStream::init(GnuID &rid)
+void PCPStream::init(const GnuID &rid)
 {
     remoteID = rid;
     routeList.clear();
@@ -62,7 +62,7 @@ void PCPStream::readHeader(Stream &in, std::shared_ptr<Channel>)
 }
 
 // ------------------------------------------
-bool PCPStream::sendPacket(ChanPacket &pack, GnuID &destID)
+bool PCPStream::sendPacket(ChanPacket &pack, const GnuID &destID)
 {
     if (destID.isSet())
         if (!destID.isSame(remoteID))
@@ -327,6 +327,8 @@ void PCPStream::readPktAtoms(std::shared_ptr<Channel> ch, AtomStream &atom, int 
 
     if (ch)
     {
+        std::lock_guard<std::recursive_mutex> cs(ch->lock);
+
         int diff = pack.pos - ch->streamPos;
         if (diff)
             LOG_DEBUG("PCP skipping %s%d (%u -> %u)", (diff>0)?"+":"", diff, ch->streamPos, pack.pos);
