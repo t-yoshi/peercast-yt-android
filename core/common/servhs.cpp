@@ -937,6 +937,7 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
     ServFilter *currFilter = servMgr->filters;
     servMgr->channelDirectory->clearFeeds();
     servMgr->transcodingEnabled = false;
+    servMgr->chat = false;
 
     bool brRoot = false;
     bool getUpd = false;
@@ -1051,6 +1052,8 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
             chanMgr->deadHitAge = getCGIargINT(arg);
         else if (strcmp(curr, "refresh") == 0)
             servMgr->refreshHTML = getCGIargINT(arg);
+        else if (strcmp(curr, "chat") == 0)
+            servMgr->chat = getCGIargBOOL(arg);
         else if (strcmp(curr, "genreprefix") == 0)
             servMgr->genrePrefix = arg;
         else if (strcmp(curr, "auth") == 0)
@@ -1157,9 +1160,8 @@ void Servent::CMD_fetch(const char* cmd, HTTP& http, String& jumpStr)
             info.bitrate = atoi(arg);
         }else if (strcmp(curr, "type") == 0)
         {
-            ChanInfo::TYPE type = ChanInfo::getTypeFromStr(arg);
+            auto type = arg;
             info.contentType = type;
-            info.contentTypeStr = ChanInfo::getTypeStr(type);
             info.MIMEType = ChanInfo::getMIMEType(type);
             info.streamExt = ChanInfo::getTypeExt(type);
         }
@@ -1524,8 +1526,7 @@ static std::string dumpChanInfo(const ChanInfo& info)
     b += STR("id = ", info.id.str(), "\n");
     b += STR("bcID = ", info.bcID.str(), "\n");
     b += STR("bitrate = ", info.bitrate, "\n");
-    b += STR("contentType = ", info.contentType, "\n");
-    b += STR("contentTypeStr = ", inspect(info.contentTypeStr), "\n");
+    b += STR("contentType = ", info.contentType.c_str(), "\n");
     b += STR("MIMEType = ", inspect(info.MIMEType), "\n");
     b += STR("streamExt = ", inspect(info.streamExt), "\n");
     b += STR("srcProtocol = ", info.srcProtocol, "\n");
