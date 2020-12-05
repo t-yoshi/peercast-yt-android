@@ -791,14 +791,18 @@ static void  writeRelayChannel(IniFileBase &iniFile, std::shared_ptr<Channel> c)
 void ServMgr::saveSettings(const char *fn)
 {
     IniFile iniFile;
-    if (!iniFile.openWriteReplace(fn))
+    //書き込み中に強制終了すると消えるのでアトミックに変更する
+    const std::string editFile = std::string(fn) + ".edit";
+
+    if (!iniFile.openWriteReplace(editFile.c_str()))
     {
-        LOG_ERROR("Unable to open ini file");
+        LOG_ERROR("Unable to open ini.edit file");
     }else{
         LOG_DEBUG("Saving settings to: %s", fn);
 
         doSaveSettings(iniFile);
         iniFile.close();
+        ::rename(editFile.c_str(), fn);
     }
 }
 
