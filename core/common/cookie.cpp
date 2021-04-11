@@ -62,7 +62,7 @@ void    CookieList::remove(Cookie &c)
 }
 
 // -----------------------------------
-bool Cookie::operator ==(const Cookie &c)
+bool Cookie::operator ==(const Cookie &c) const
 {
     return (c.ip == ip && strcmp(c.id, id)==0);
 }
