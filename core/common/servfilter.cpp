@@ -62,9 +62,12 @@ bool ServFilter::matches(int fl, const Host& h) const
     case T_HOSTNAME:
         return h.ip == IP(ClientSocket::getIP(pattern.c_str()));
     case T_SUFFIX:
-        char str[256] = "";
-        ClientSocket::getHostname(str, h.ip.ipv4());
-        return str::has_suffix(str, pattern);
+        std::string str;
+        if (sys->getHostnameByAddress(h.ip, str)) {
+            return str::has_suffix(str, pattern);
+        } else {
+            return false;
+        }
     }
 }
 
@@ -95,7 +98,7 @@ void ServFilter::setPattern(const char* str)
 }
 
 // --------------------------------------------------
-std::string ServFilter::getPattern()
+std::string ServFilter::getPattern() const
 {
     switch (type)
     {
