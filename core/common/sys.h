@@ -92,7 +92,7 @@ public:
         return false;
     }
     
-#ifdef __BIG_ENDIAN__
+#if _BYTE_ORDER == _BIG_ENDIAN
     unsigned short  convertEndian(unsigned short v) { return SWAP2(v); }
     unsigned int    convertEndian(unsigned int v) { return SWAP4(v); }
 #else
@@ -120,11 +120,6 @@ extern Sys *sys;
 // ------------------------------------
 #ifdef _UNIX
 
-#ifdef __APPLE__
-#include <sched.h>
-#define _BIG_ENDIAN 1
-#endif
-
 #endif
 
 #ifdef WIN32
@@ -133,7 +128,7 @@ typedef __int64 int64_t;
 
 // ------------------------------------
 
-#if _BIG_ENDIAN
+#if _BYTE_ORDER == _BIG_ENDIAN
 #define CHECK_ENDIAN2(v) v=SWAP2(v)
 #define CHECK_ENDIAN3(v) v=SWAP3(v)
 #define CHECK_ENDIAN4(v) v=SWAP4(v)
