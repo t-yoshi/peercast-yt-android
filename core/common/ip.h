@@ -54,7 +54,7 @@ class IP
     IP(unsigned int ipv4)
         : addr {0,0,0,0,0,0,0,0,0,0,0xff,0xff}
     {
-        *reinterpret_cast<unsigned int *>(addr + 12) = htonl(ipv4);
+        *reinterpret_cast<uint32_t *>(addr + 12) = htonl(ipv4);
     }
     
     IP(in6_addr& anAddr)
