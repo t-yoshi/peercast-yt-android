@@ -2,17 +2,26 @@ require 'fileutils'
 
 def spawn_peercast
   # 新品の設定ファイルを使う。
-  FileUtils.cp "peercast.ini.master", "peercast.ini"
+  FileUtils.cp "peercast.ini.master", "peercast-yt/peercast.ini"
 
   # 起動。
-  pid = spawn "peercast-yt/peercast -i peercast.ini"
-  sleep 0.1
+  if RUBY_PLATFORM =~ /msys/
+    cmdline = "./peercast.exe"
+  else
+    cmdline = "./peercast -i peercast.ini -P ."
+  end
+  Dir.chdir("peercast-yt")
+  pid = spawn cmdline
+  Dir.chdir("..")
+  sleep 1.0
 
   at_exit {
-    Process.kill(9, pid)
+    Process.kill(9, pid) rescue nil
   }
 
   fail "peercast died immediately after spawn" if Process.wait(-1, Process::WNOHANG) != nil
+
+  return pid
 end
 
 def assert_eq(expectation, actual, opts = {})

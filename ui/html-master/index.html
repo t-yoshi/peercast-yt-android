@@ -34,12 +34,16 @@
     <TR align=left>
       <th class="left-heading">{#Firewalled} (v4)</th>
       <TD>{@if servMgr.firewallKnown} {@if servMgr.isFirewalled}
-        {#Yes} {@else} {#No} {@end} {@else} {#Unknown} {@end} </TD>
+        {#Yes} {@else} {#No} {@end} {@else} {#Unknown} {@end}
+        {@if servMgr.flags.forceFirewalled} <b title="{#The forceFirewalled flag is on.}">{#(forced)}</b> {@end}
+        - <a class="alert-link" href="/admin?cmd=portcheck4">{#Check}</a></TD>
     </TR>
     <TR align=left>
       <th class="left-heading">{#Firewalled} (v6)</th>
       <TD>{@if servMgr.firewallKnownIPv6} {@if servMgr.isFirewalledIPv6}
-        {#Yes} {@else} {#No} {@end} {@else} {#Unknown} {@end} </TD>
+        {#Yes} {@else} {#No} {@end} {@else} {#Unknown} {@end}
+        {@if servMgr.flags.forceFirewalled} <b title="{#The forceFirewalled flag is on.}">{#(forced)}</b> {@end}
+        - <a class="alert-link" href="/admin?cmd=portcheck6">{#Check}</a></TD>
     </TR>
     <TR align=left>
       <th class="left-heading">{#XML stats}</th>
@@ -57,17 +61,30 @@
       <th class="left-heading">{#Host options}</th>
       <TD>{@if servMgr.isRoot}{#Root}{@end} {@if servMgr.isPrivate}{#Licensed}{@end} {@if servMgr.forceYP}{#ForceYP}{@end}</TD>
     </TR>
+    <tr align=left>
+      <th class="left-heading">{#Installation directory}</th>
+      <td>{$servMgr.installationDirectory}</td>
+    </tr>
+    <tr align=left>
+      <th class="left-heading">{#Configuration file}</th>
+      <td>{$servMgr.configurationFile}</td>
+    </tr>
+    <tr align=left>
+      <th class="left-heading">{#Build date and time}</th>
+      <td>{$servMgr.buildDateTime}</td>
+    </tr>
   </TABLE>
 
   <table class="table-panel" class="normal">
     <tr>
-      <th colspan="2">{#Channel Feeds}</th>
+      <th colspan="3">{#Channel Feeds}</th>
     </tr>
 
     {@loop servMgr.numChannelFeeds}
     <tr>
       <td>{$loop.channelFeed.url}</td>
       <td align="center">{$loop.channelFeed.status}</td>
+      <td align="center"><a href="/admin?cmd=chanfeedlog&index={$loop.index}" class="alert-link">&#x2139;&#xFE0F;<!-- information source emoji --></a></td>
     </tr>
     {@end}
   </table>
@@ -121,5 +138,19 @@
     </tr>
   </table>
   </div>
+
+  <script>
+  $(function(){
+      $(".alert-link").click(function(ev){
+          ev.preventDefault();
+          $.ajax($(this).attr("href"), {
+              cache: false,
+              success: function (data) {
+                  alert(data);
+              },
+          });
+      });
+  });
+  </script>
   {@end}
 </DIV>

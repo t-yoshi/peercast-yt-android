@@ -187,14 +187,12 @@ void    Servent::kill()
     if (sock)
     {
         sock->close();
-        delete sock;
         sock = NULL;
     }
 
     if (pushSock)
     {
         pushSock->close();
-        delete pushSock;
         pushSock = NULL;
     }
 
@@ -227,7 +225,6 @@ void Servent::reset()
 
     pcpStream = NULL;
 
-    flowControl = false;
     networkID.clear();
 
     chanID.clear();
@@ -275,7 +272,7 @@ bool Servent::sendPacket(ChanPacket &pack, const GnuID &cid, const GnuID &sid, c
 }
 
 // -----------------------------------
-bool Servent::acceptGIV(ClientSocket *givSock)
+bool Servent::acceptGIV(std::shared_ptr<ClientSocket> givSock)
 {
     if (!pushSock)
     {
@@ -339,7 +336,7 @@ void Servent::checkFree()
 
 // -----------------------------------
 // クライアントとの対話を開始する。
-void Servent::initIncoming(ClientSocket *s, unsigned int a)
+void Servent::initIncoming(std::shared_ptr<ClientSocket> s, unsigned int a)
 {
     try{
         checkFree();
@@ -477,7 +474,7 @@ bool    Servent::pingHost(Host &rhost, const GnuID &rsid)
     char ipstr[64];
     strcpy(ipstr, rhost.str().c_str());
     LOG_DEBUG("Ping host %s: trying..", ipstr);
-    ClientSocket *s=NULL;
+    std::shared_ptr<ClientSocket> s;
     bool hostOK=false;
     try
     {
@@ -532,7 +529,6 @@ bool    Servent::pingHost(Host &rhost, const GnuID &rsid)
     if (s)
     {
         s->close();
-        delete s;
     }
 
     if (!hostOK)
@@ -582,10 +578,6 @@ void Servent::handshakeStream_readHeaders(bool& gotPCP, unsigned int& reqPos, in
 // 状況に応じて this->outputProtocol を設定する。
 void Servent::handshakeStream_changeOutputProtocol(bool gotPCP, const ChanInfo& chanInfo)
 {
-    // 旧プロトコルへの切り替え？
-    if ((!gotPCP) && (outputProtocol == ChanInfo::SP_PCP))
-        outputProtocol = ChanInfo::SP_PEERCAST;
-
     // WMV ならば MMS(MMSH)
     if (outputProtocol == ChanInfo::SP_HTTP)
     {
@@ -671,9 +663,6 @@ void Servent::handshakeStream_returnStreamHeaders(AtomStream& atom,
         {
             sock->writeLineF("%s %d", PCX_HS_POS, streamPos);
             sock->writeLineF("%s %s", HTTP_HS_CONTENT, MIME_XPCP);
-        }else if (outputProtocol == ChanInfo::SP_PEERCAST)
-        {
-            sock->writeLineF("%s %s", HTTP_HS_CONTENT, MIME_XPEERCAST);
         }
     }
     sock->writeLine("");
@@ -1021,23 +1010,39 @@ int Servent::givProc(ThreadInfo *thread)
 }
 
 // -----------------------------------
+void Servent::writeHeloAtom(AtomStream &atom, bool sendPort, bool sendPing, bool sendBCID, const GnuID& sessionID, uint16_t port, const GnuID& broadcastID)
+{
+     atom.writeParent(PCP_HELO, 3 + (sendPort?1:0) + (sendPing?1:0) + (sendBCID?1:0));
+         atom.writeString(PCP_HELO_AGENT, PCX_AGENT);
+         atom.writeInt(PCP_HELO_VERSION, PCP_CLIENT_VERSION);
+         atom.writeBytes(PCP_HELO_SESSIONID, sessionID.id, 16);
+         if (sendPort)
+              atom.writeShort(PCP_HELO_PORT, port);
+         if (sendPing)
+              atom.writeShort(PCP_HELO_PING, port);
+         if (sendBCID)
+              atom.writeBytes(PCP_HELO_BCID, broadcastID.id, 16);
+}
+
+// -----------------------------------
 void Servent::handshakeOutgoingPCP(AtomStream &atom, Host &rhost, GnuID &rid, String &agent, bool isTrusted)
 {
     int ipv = rhost.ip.isIPv4Mapped() ? 4 : 6;
-    bool nonFW = (servMgr->getFirewall(ipv) != ServMgr::FW_ON);
-    bool testFW = (servMgr->getFirewall(ipv) == ServMgr::FW_UNKNOWN);
-    bool sendBCID = isTrusted && chanMgr->isBroadcasting();
+    if (servMgr->flags.get("sendPortAtomWhenFirewallUnknown"))
+    {
+        bool sendPort = (servMgr->getFirewall(ipv) != ServMgr::FW_ON);
+        bool testFW   = (servMgr->getFirewall(ipv) == ServMgr::FW_UNKNOWN);
+        bool sendBCID = isTrusted && chanMgr->isBroadcasting();
 
-    atom.writeParent(PCP_HELO, 3 + (testFW?1:0) + (nonFW?1:0) + (sendBCID?1:0));
-        atom.writeString(PCP_HELO_AGENT, PCX_AGENT);
-        atom.writeInt(PCP_HELO_VERSION, PCP_CLIENT_VERSION);
-        atom.writeBytes(PCP_HELO_SESSIONID, servMgr->sessionID.id, 16);
-        if (nonFW)
-            atom.writeShort(PCP_HELO_PORT, servMgr->serverHost.port);
-        if (testFW)
-            atom.writeShort(PCP_HELO_PING, servMgr->serverHost.port);
-        if (sendBCID)
-            atom.writeBytes(PCP_HELO_BCID, chanMgr->broadcastID.id, 16);
+        writeHeloAtom(atom, sendPort, testFW, sendBCID, servMgr->sessionID, servMgr->serverHost.port, chanMgr->broadcastID);
+    }else
+    {
+        bool sendPort = (servMgr->getFirewall(ipv) == ServMgr::FW_OFF);
+        bool testFW   = (servMgr->getFirewall(ipv) == ServMgr::FW_UNKNOWN);
+        bool sendBCID = isTrusted && chanMgr->isBroadcasting();
+
+        writeHeloAtom(atom, sendPort, testFW, sendBCID, servMgr->sessionID, servMgr->serverHost.port, chanMgr->broadcastID);
+    }
 
     LOG_DEBUG("PCP outgoing waiting for OLEH..");
 
@@ -1543,7 +1548,6 @@ int Servent::outgoingProc(ThreadInfo *thread)
                 if (sv->sock)
                 {
                     sv->sock->close();
-                    delete sv->sock;
                     sv->sock = NULL;
                 }
             }catch (StreamException &) {}
@@ -1597,17 +1601,12 @@ int Servent::incomingProc(ThreadInfo *thread)
 }
 
 // -----------------------------------
-void Servent::processStream(bool doneHandshake, ChanInfo &chanInfo)
+void Servent::processStream(ChanInfo &chanInfo)
 {
-    ASSERT(doneHandshake == false);
+    setStatus(S_HANDSHAKE);
 
-    if (!doneHandshake)
-    {
-        setStatus(S_HANDSHAKE);
-
-        if (!handshakeStream(chanInfo))
-            return;
-    }
+    if (!handshakeStream(chanInfo))
+        return;
 
     ASSERT(chanID.isSet());
 
@@ -1644,9 +1643,6 @@ void Servent::processStream(bool doneHandshake, ChanInfo &chanInfo)
         }else if (outputProtocol  == ChanInfo::SP_PCP)
         {
             sendPCPChannel();
-        }else if (outputProtocol  == ChanInfo::SP_PEERCAST)
-        {
-            sendPeercastChannel();
         }
     }
 
@@ -1675,7 +1671,7 @@ bool Servent::waitForChannelHeader(ChanInfo &info)
 // -----------------------------------
 void Servent::sendRawChannel(bool sendHead, bool sendData)
 {
-    WriteBufferedStream bsock(sock);
+    WriteBufferedStream bsock(sock.get());
 
     try
     {
@@ -1704,8 +1700,7 @@ void Servent::sendRawChannel(bool sendHead, bool sendData)
             unsigned int streamIndex = ch->streamIndex;
             unsigned int connectTime = sys->getTime();
             unsigned int lastWriteTime = connectTime;
-            bool         skipContinuation = true;
-            int          sendSkipCount = 0;
+            bool         skipContinuation = servMgr->flags.get("startPlayingFromKeyFrame");
 
             while ((thread.active()) && sock->active())
             {
@@ -1726,15 +1721,7 @@ void Servent::sendRawChannel(bool sendHead, bool sendData)
                 while (ch->rawData.findPacket(streamPos, rawPack))
                 {
                     if (syncPos != rawPack.sync)
-                    {
-                        if (sendSkipCount)
-                        {
-                            LOG_ERROR("Send skip: %d", rawPack.sync - syncPos);
-                            throw TimeoutException();
-                        }else
-                            LOG_DEBUG("First send skip: %d", rawPack.sync - syncPos);
-                        sendSkipCount++;
-                    }
+                        LOG_ERROR("Send skip: %d", rawPack.sync-syncPos);
                     syncPos = rawPack.sync + 1;
 
                     if ((rawPack.type == ChanPacket::T_DATA) || (rawPack.type == ChanPacket::T_HEAD))
@@ -1746,7 +1733,9 @@ void Servent::sendRawChannel(bool sendHead, bool sendData)
                             lastWriteTime = sys->getTime();
                         }else
                         {
-                            LOG_DEBUG("raw: skip continuation %s packet pos=%d", rawPack.type==ChanPacket::T_DATA?"DATA":"HEAD", rawPack.pos);
+                            LOG_DEBUG("raw: skip continuation %s packet pos=%d",
+                                      (rawPack.type == ChanPacket::T_DATA) ? "DATA" : "HEAD",
+                                      rawPack.pos);
                         }
                     }
 
@@ -1890,68 +1879,13 @@ void Servent::sendRawMetaChannel(int interval)
 }
 
 // -----------------------------------
-void Servent::sendPeercastChannel()
-{
-    try
-    {
-        setStatus(S_CONNECTED);
-
-        auto ch = chanMgr->findChannelByID(chanID);
-        if (!ch)
-            throw StreamException("Channel not found");
-
-        LOG_DEBUG("Starting PeerCast stream: %s", ch->info.name.cstr());
-
-        sock->writeTag("PCST");
-
-        ChanPacket pack;
-
-        ch->headPack.writePeercast(*sock);
-
-        pack.init(ChanPacket::T_META, ch->insertMeta.data, ch->insertMeta.len, ch->streamPos);
-        pack.writePeercast(*sock);
-
-        streamPos = 0;
-        unsigned int syncPos=0;
-        while ((thread.active()) && sock->active())
-        {
-            ch = chanMgr->findChannelByID(chanID);
-            if (!ch)
-            {
-                throw StreamException("Channel not found");
-            }
-
-            ChanPacket rawPack;
-            if (ch->rawData.findPacket(streamPos, rawPack))
-            {
-                if ((rawPack.type == ChanPacket::T_DATA) || (rawPack.type == ChanPacket::T_HEAD))
-                {
-                    sock->writeTag("SYNC");
-                    sock->writeShort(4);
-                    sock->writeShort(0);
-                    sock->write(&syncPos, 4);
-                    syncPos++;
-
-                    rawPack.writePeercast(*sock);
-                }
-                streamPos = rawPack.pos + rawPack.len;
-            }
-            sys->sleepIdle();
-        }
-    }catch (StreamException &e)
-    {
-        LOG_ERROR("Stream channel: %s", e.msg);
-    }
-}
-
-// -----------------------------------
 void Servent::sendPCPChannel()
 {
     auto ch = chanMgr->findChannelByID(chanID);
     if (!ch)
         throw StreamException("Channel not found");
 
-    WriteBufferedStream bsock(sock);
+    WriteBufferedStream bsock(sock.get());
     AtomStream atom(bsock);
 
     pcpStream = new PCPStream(remoteID);
@@ -1979,7 +1913,6 @@ void Servent::sendPCPChannel()
             }
 
         unsigned int streamIndex = ch->streamIndex;
-        int          sendSkipCount = 0;
 
         while (thread.active())
         {
@@ -2003,18 +1936,6 @@ void Servent::sendPCPChannel()
             // FIXME: ストリームインデックスの変更を確かめずにどんどん読み出して大丈夫？
             while (ch->rawData.findPacket(streamPos, rawPack))
             {
-                if (syncPos != rawPack.sync)
-                {
-                    if (sendSkipCount)
-                    {
-                        LOG_ERROR("PCP send skip: %d", rawPack.sync - syncPos);
-                        throw TimeoutException();
-                    }else
-                        LOG_DEBUG("PCP first send skip: %d", rawPack.sync - syncPos);
-                    sendSkipCount++;
-                }
-                syncPos = rawPack.sync + 1;
-
                 if (rawPack.type == ChanPacket::T_HEAD)
                 {
                     atom.writeParent(PCP_CHAN, 2);
@@ -2108,7 +2029,7 @@ int Servent::serverProc(ThreadInfo *thread)
                 continue;
             }
 
-            ClientSocket *cs = sv->sock->accept();
+            auto cs = sv->sock->accept();
             if (!cs)
             {
                 LOG_ERROR("accept failed");
@@ -2121,7 +2042,6 @@ int Servent::serverProc(ThreadInfo *thread)
             {
                 LOG_ERROR("Out of servents");
                 cs->close();
-                delete cs;
                 continue;
             }
 

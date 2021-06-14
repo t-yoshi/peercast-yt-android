@@ -24,6 +24,7 @@
 #include "sys.h"
 #include "logbuf.h"
 #include "stream.h"
+#include "socket.h"
 #include <chrono>
 
 // ------------------------------------------
@@ -217,6 +218,13 @@ bool    Sys::startThread(ThreadInfo *info)
                                        {
                                            sys->setThreadName("new thread");
                                            info->func(info);
+                                       }catch (GeneralException &e)
+                                       {
+                                           // just log it and continue..
+                                           LOG_ERROR("Unexpected exception: %s", e.what());
+                                           for (const std::string line : e.backtrace) {
+                                               LOG_ERROR("    %s", line.c_str());
+                                           }
                                        }catch (std::exception &e)
                                        {
                                            // just log it and continue..
@@ -244,6 +252,13 @@ bool    Sys::startWaitableThread(ThreadInfo *info)
                                        {
                                            sys->setThreadName("new thread");
                                            info->func(info);
+                                       }catch (GeneralException &e)
+                                       {
+                                           // just log it and continue..
+                                           LOG_ERROR("Unexpected exception: %s", e.what());
+                                           for (const std::string line : e.backtrace) {
+                                               LOG_ERROR("    %s", line.c_str());
+                                           }
                                        }catch (std::exception &e)
                                        {
                                            // just log it and continue..
@@ -274,4 +289,10 @@ void Sys::waitThread(ThreadInfo* info)
     {
         LOG_ERROR("waitThread called on non-joinable thread");
     }
+}
+
+// ---------------------------------
+IP Sys::getInterfaceIPv4Address() const
+{
+    return ClientSocket::getIP(nullptr);
 }

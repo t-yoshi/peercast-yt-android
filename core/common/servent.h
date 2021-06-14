@@ -134,7 +134,7 @@ public:
 
     void    reset();
     bool    initServer(Host &);
-    void    initIncoming(ClientSocket *, unsigned int);
+    void    initIncoming(std::shared_ptr<ClientSocket>, unsigned int);
     void    initOutgoing(TYPE);
     void    initGIV(const Host &, const GnuID &);
     void    initPCP(const Host &);
@@ -173,8 +173,8 @@ public:
 
     void    handshakeHTML(char *);
     void    handshakeXML();
-    void    handshakeCMD(HTTP&, char *);
-    bool    handshakeAuth(HTTP &, const char *, bool);
+    void    handshakeCMD(HTTP&, const std::string&);
+    bool    handshakeAuth(HTTP &, const char *);
 
     bool    handshakeHTTPBasicAuth(HTTP &http);
 
@@ -216,10 +216,9 @@ public:
     bool    writeVariable(Stream &, const String &) override;
 
     // the "mainloop" of servents
-    void    processStream(bool, ChanInfo &);
+    void    processStream(ChanInfo &);
 
     void    triggerChannel(char *, ChanInfo::PROTOCOL, bool);
-    void    sendPeercastChannel();
     void    sendRawChannel(bool, bool);
     void    sendRawMetaChannel(int);
     void    sendPCPChannel();
@@ -242,7 +241,7 @@ public:
 
     Host    getHost();
 
-    bool    acceptGIV(ClientSocket *);
+    bool    acceptGIV(std::shared_ptr<ClientSocket>);
     bool    sendPacket(ChanPacket &, const GnuID &, const GnuID &, const GnuID &, Servent::TYPE);
 
     ChanInfo createChannelInfo(GnuID broadcastID, const String& broadcastMsg, cgi::Query& query, const std::string& contentType);
@@ -253,6 +252,8 @@ public:
     static std::string formatTimeDifference(unsigned int t, unsigned int currentTime);
 
     static bool isTerminationCandidate(ChanHit* hit);
+
+    static void writeHeloAtom(AtomStream &atom, bool sendPort, bool sendPing, bool sendBCID, const GnuID& sessionID, uint16_t port, const GnuID& broadcastID);
 
     TYPE                type;
     std::atomic<STATUS> status;
@@ -278,7 +279,7 @@ public:
 
     std::atomic<unsigned int> allow;
 
-    ClientSocket        *sock, *pushSock;
+    std::shared_ptr<ClientSocket> sock, pushSock;
 
     std::recursive_mutex lock;
 
@@ -288,8 +289,6 @@ public:
 
     ChanInfo::PROTOCOL  outputProtocol;
 
-    bool                flowControl;
-
     Servent             *next;
 
     PCPStream           *pcpStream;
@@ -298,7 +297,9 @@ public:
 private:
     void CMD_add_speedtest(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_apply(const char* cmd, HTTP& http, String& jumpStr);
+    void CMD_applyflags(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_bump(const char* cmd, HTTP& http, String& jumpStr);
+    void CMD_chanfeedlog(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_clear(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_clearlog(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_control_rtmp(const char* cmd, HTTP& http, String& jumpStr);
@@ -310,6 +311,8 @@ private:
     void CMD_login(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_logout(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_redirect(const char* cmd, HTTP& http, String& jumpStr);
+    void CMD_portcheck4(const char* cmd, HTTP& http, String& jumpStr);
+    void CMD_portcheck6(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_refresh_speedtest(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_shutdown(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_speedtest_cached_xml(const char* cmd, HTTP& http, String& jumpStr);

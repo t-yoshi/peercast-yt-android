@@ -92,7 +92,6 @@ public:
 #define MIME_M3U             "audio/m3u"
 #define MIME_MPEGURL         "audio/mpegurl"
 #define MIME_XM3U            "audio/x-mpegurl"
-#define MIME_XPEERCAST       "application/x-peercast"
 #define MIME_XPCP            "application/x-peercast-pcp"
 #define MIME_RAW             "application/binary"
 #define MIME_JPEG            "image/jpeg"
@@ -248,6 +247,7 @@ class HTTP : public IndirectStream
 public:
     HTTP(Stream &s)
         : arg(NULL)
+        , m_headersRead(false)
     {
         cmdLine[0] = '\0';
         init(&s);
@@ -267,6 +267,8 @@ public:
     int     getArgInt();
 
     void    getAuthUserPass(char *, char *, size_t, size_t);
+    static void parseAuthorizationHeader(const char* arg, char* user, char* pass, size_t ulen, size_t plen);
+    static void parseAuthorizationHeader(const std::string& arg, std::string& user, std::string& pass);
 
     void    readHeaders()
     {
@@ -283,24 +285,15 @@ public:
         headers.clear();
     }
 
-    HTTPRequest getRequest()
-    {
-        if (method.size() > 0 &&
-            requestUrl.size() > 0 &&
-            protocolVersion.size() > 0 &&
-            strlen(cmdLine) == 0)
-        {
-            return HTTPRequest(method, requestUrl, protocolVersion, headers);
-        }else
-        {
-            throw GeneralException("Request not ready");
-        }
-    }
+    HTTPRequest getRequest();
 
     void send(const HTTPResponse& response);
     HTTPResponse send(const HTTPRequest& request);
 
     char    cmdLine[8192], *arg;
+
+    bool m_headersRead;
+    std::shared_ptr<std::string> m_body;
 
     std::string method;
     std::string requestUrl;

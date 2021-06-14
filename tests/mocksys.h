@@ -10,7 +10,7 @@ public:
     {
     }
 
-    class ClientSocket* createSocket() override
+    std::shared_ptr<ClientSocket> createSocket() override
     {
         return NULL;
     }
@@ -103,6 +103,35 @@ public:
         } else {
             out = ""; return false;
         }
+    }
+
+    std::string getExecutablePath() override
+    {
+        return "";
+    }
+
+    std::string dirname(const std::string&) override
+    {
+        return "";
+    }
+
+    std::string joinPath(const std::vector<std::string>&) override
+    {
+        return "";
+    }
+
+    std::string realPath(const std::string& path) override
+    {
+        return "";
+    }
+
+    IP getInterfaceIPv4Address() const override
+    {
+        return IP::parse("192.168.0.2");
+    }
+
+    void rename(const std::string&, const std::string&) override
+    {
     }
 };
 

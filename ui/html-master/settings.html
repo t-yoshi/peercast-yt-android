@@ -1,7 +1,7 @@
 {^define LAYOUT layout.html}
 {^define TITLE}{#_Settings_navbar} - {#PeerCast on} {^SERVER_NAME}{^end}
 
-<form action=/admin method=get>
+<form action=/admin method=POST>
   <input type=hidden value=apply name=cmd>
   <table class="table-panel" width="50%" border="0">
     <tr >
@@ -75,6 +75,12 @@
           <th class="left-heading">{#Randomize broadcasting channel ID}</th>
           <td>
             <input type="checkbox" name=randomizechid value=1 {@if servMgr.randomizeBroadcastingChannelID}checked{@end}>
+          </td>
+        </tr>
+        <tr class="normal">
+          <th class="left-heading">{#Public Directory}</th>
+          <td>
+            <input type="checkbox" name="public_directory" value=1 {@if servMgr.publicDirectoryEnabled}checked{@end}>
           </td>
         </tr>
       </table>
@@ -188,11 +194,6 @@
       {@end}
     </div>
 
-
-
-
-
-    
     <div class="column">
       <table class="table-panel" width="100%" align=center border=0>
         <tr align=middle class="normal">

@@ -26,6 +26,8 @@
 #include "inifile.h"
 #include "servfilter.h"
 #include "chanmgr.h"
+#include "ini.h"
+#include "flag.h"
 
 // ----------------------------------
 
@@ -182,14 +184,14 @@ public:
     void            setMaxRelays(int);
     bool            checkForceIP();
     void            saveSettings(const char *);
-    void            doSaveSettings(IniFileBase& iniFile);
+    ini::Document   getSettings();
     void            loadSettings(const char *);
     void            setPassiveSearch(unsigned int);
     int             findChannel(ChanInfo &);
     bool            getChannel(char *, ChanInfo &, bool);
     void            setFilterDefaults();
 
-    bool            acceptGIV(ClientSocket *);
+    bool            acceptGIV(std::shared_ptr<ClientSocket>);
     void            addVersion(unsigned int);
 
     void            broadcastRootSettings(bool);
@@ -200,7 +202,7 @@ public:
 
     unsigned int    getUptime()
     {
-        return sys->getTime()-startTime;
+        return sys->getTime() - startTime;
     }
 
     bool    needHosts()
@@ -214,7 +216,7 @@ public:
 
     bool    controlInFull()
     {
-        return numConnected(Servent::T_CIN)>=maxControl;
+        return numConnected(Servent::T_CIN) >= maxControl;
     }
 
     bool    relaysFull()
@@ -228,7 +230,7 @@ public:
 
     bool    bitrateFull(unsigned int br)
     {
-        return maxBitrateOut ? (BYTES_TO_KBPS(totalOutput(false))+br) > maxBitrateOut  : false;
+        return maxBitrateOut ? (BYTES_TO_KBPS(totalOutput(false)) + br) > maxBitrateOut  : false;
     }
 
     void logLevel(int newLevel);
@@ -240,6 +242,8 @@ public:
     unsigned int    totalOutput(bool);
 
     bool updateIPAddress(const IP& newIP);
+
+    static const char* getFirewallStateString(FW_STATE);
 
     ThreadInfo          serverThread;
     ThreadInfo          idleThread;
@@ -303,6 +307,7 @@ public:
 
     const std::unique_ptr<class ChannelDirectory>
                         channelDirectory;
+    bool                publicDirectoryEnabled;
 
     const std::unique_ptr<class UptestServiceRegistry>
                         uptestServiceRegistry;
@@ -311,8 +316,6 @@ public:
     FW_STATE            firewalledIPv6;
 
     String              serverName;
-
-    std::string         genrePrefix;
 
     bool                transcodingEnabled;
     std::string         preset;
@@ -326,7 +329,7 @@ public:
 
     bool                chat;
 
-    std::atomic_bool    randomizeBroadcastingChannelID;
+    FlagRegistory       flags;
 };
 
 // ----------------------------------

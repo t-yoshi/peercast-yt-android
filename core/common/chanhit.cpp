@@ -128,7 +128,7 @@ void ChanHit::initLocal(
     versionExNumber = PCP_CLIENT_VERSION_EX_NUMBER;
 
     rhost[0] = Host(host.ip, host.port);
-    rhost[1] = Host(ClientSocket::getIP(NULL), host.port);
+    rhost[1] = Host(sys->getInterfaceIPv4Address(), host.port);
 
     if (firewalled)
         rhost[0].port = 0;
@@ -136,8 +136,7 @@ void ChanHit::initLocal(
     oldestPos = oldp;
     newestPos = newp;
 
-    uphost.ip   = sourceHost.ip;
-    uphost.port = sourceHost.port;
+    uphost      = sourceHost;
     uphostHops  = 1;
 }
 
