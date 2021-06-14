@@ -26,6 +26,8 @@
 #include "inifile.h"
 #include "servfilter.h"
 #include "chanmgr.h"
+#include "ini.h"
+#include "flag.h"
 
 // ----------------------------------
 
@@ -182,7 +184,7 @@ public:
     void            setMaxRelays(int);
     bool            checkForceIP();
     void            saveSettings(const char *);
-    void            doSaveSettings(IniFileBase& iniFile);
+    ini::Document   getSettings();
     void            loadSettings(const char *);
     void            setPassiveSearch(unsigned int);
     int             findChannel(ChanInfo &);
@@ -240,6 +242,8 @@ public:
     unsigned int    totalOutput(bool);
 
     bool updateIPAddress(const IP& newIP);
+
+    static const char* getFirewallStateString(FW_STATE);
 
     ThreadInfo          serverThread;
     ThreadInfo          idleThread;
@@ -303,6 +307,7 @@ public:
 
     const std::unique_ptr<class ChannelDirectory>
                         channelDirectory;
+    bool                publicDirectoryEnabled;
 
     const std::unique_ptr<class UptestServiceRegistry>
                         uptestServiceRegistry;
@@ -311,8 +316,6 @@ public:
     FW_STATE            firewalledIPv6;
 
     String              serverName;
-
-    std::string         genrePrefix;
 
     bool                transcodingEnabled;
     std::string         preset;
@@ -326,14 +329,7 @@ public:
 
     bool                chat;
 
-    std::atomic_bool    randomizeBroadcastingChannelID;
-    std::atomic_bool    sendPortAtomWhenFirewallUnknown;
-    /* sendPortAtomWhenFirewallUnknown: 外向きのPCP接続でハンドシェイ
-       クする時、自身のファイアーウォール状態が不明な場合、
-       PCP_HELO_PORT アトムを送るかどうかを制御する。もともと
-       PCP_HELO_PING の有無でポートチェック（ping）の有無が制御されて
-       いたが、PeerCast Station が PCP_HELO_PORT を受け取ると ping し
-       ないのでこのフラグを false に設定すれば ping してもらえる。 */
+    FlagRegistory       flags;
 };
 
 // ----------------------------------

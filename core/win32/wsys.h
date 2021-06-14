@@ -51,6 +51,10 @@ public:
 
     std::string realPath(const std::string& path) override;
 
+    std::string getDirectorySeparator() override;
+
+    void rename(const std::string& oldpath, const std::string& newpath) override;
+
     HWND    mainWindow;
     peercast::Random rndGen;
 };

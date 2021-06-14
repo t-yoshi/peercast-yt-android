@@ -204,8 +204,29 @@ std::string WSys::realPath(const std::string& path)
         throw GeneralException(str::format("_fullpath: Failed to resolve `%s`", path.c_str()).c_str());
     }
 
-    if (PathFileExistsA(resolvedPath))
-        return resolvedPath;
-    else
+    if (!PathFileExistsA(resolvedPath)) {
         throw GeneralException(str::format("realPath: File not found: %s", resolvedPath).c_str());
+    }
+
+    /* 多分フォワードスラッシュは入ってこないから、バックスラッシュだ
+       け見る。 \\ が空文字列になるのはまずいかもしれないので 2 文字未
+       満には切り詰めない。 */
+    for (int len = strlen(resolvedPath); len >= 2 && resolvedPath[len - 1] == '\\'; --len) {
+        resolvedPath[len - 1] = '\0';
+    }
+    return resolvedPath;
+}
+
+// ---------------------------------
+std::string WSys::getDirectorySeparator()
+{
+    return "\\";
+}
+
+// ---------------------------------
+void WSys::rename(const std::string& oldpath, const std::string& newpath)
+{
+    if (MoveFileExA(oldpath.c_str(), newpath.c_str(), MOVEFILE_REPLACE_EXISTING) == 0) {
+        throw GeneralException(str::format("rename: MoveFileExA failed: error = %d", GetLastError()).c_str());
+    }
 }

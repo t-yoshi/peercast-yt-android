@@ -23,17 +23,6 @@ void APICALL PeercastInstance::init()
     if (peercastApp->getIniFilename())
         servMgr->loadSettings(peercastApp->getIniFilename());
 
-    auto v = sys->getAllIPAddresses();
-    for (auto it = v.begin(); it != v.end(); ++it) {
-        IP ip;
-        if (IP::tryParse(*it, ip)) {
-            LOG_DEBUG("New address discovered: %s", it->c_str());
-            servMgr->updateIPAddress(ip);
-        } else {
-            LOG_DEBUG("\"%s\" could not be parsed", it->c_str());
-        }
-    }
-
     servMgr->start();
 }
 
@@ -178,18 +167,24 @@ void    APICALL PeercastInstance::callLocalURL(const char *url)
 }
 
 // --------------------------------------------------
+thread_local std::vector<std::function<void(LogBuffer::TYPE type, const char*)>> AUX_LOG_FUNC_VECTOR;
 void ADDLOG(const char *fmt, va_list ap, LogBuffer::TYPE type)
 {
     if (!servMgr) return;
-    if (servMgr->logLevel() > type) return;
     if (servMgr->pauseLog) return;
     if (!sys) return;
 
     const int MAX_LINELEN = 1024;
-
     char str[MAX_LINELEN+1];
     vsnprintf(str, MAX_LINELEN-1, fmt, ap);
     str[MAX_LINELEN-1]=0;
+
+    // ログレベルに関わらず出力する。
+    for (auto func : AUX_LOG_FUNC_VECTOR) {
+        func(type, str);
+    }
+
+    if (servMgr->logLevel() > type) return;
 
     if (type != LogBuffer::T_NONE)
         sys->logBuf->write(str, type);

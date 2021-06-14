@@ -173,8 +173,8 @@ public:
 
     void    handshakeHTML(char *);
     void    handshakeXML();
-    void    handshakeCMD(HTTP&, char *);
-    bool    handshakeAuth(HTTP &, const char *, bool);
+    void    handshakeCMD(HTTP&, const std::string&);
+    bool    handshakeAuth(HTTP &, const char *);
 
     bool    handshakeHTTPBasicAuth(HTTP &http);
 
@@ -216,7 +216,7 @@ public:
     bool    writeVariable(Stream &, const String &) override;
 
     // the "mainloop" of servents
-    void    processStream(bool, ChanInfo &);
+    void    processStream(ChanInfo &);
 
     void    triggerChannel(char *, ChanInfo::PROTOCOL, bool);
     void    sendRawChannel(bool, bool);
@@ -297,7 +297,9 @@ public:
 private:
     void CMD_add_speedtest(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_apply(const char* cmd, HTTP& http, String& jumpStr);
+    void CMD_applyflags(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_bump(const char* cmd, HTTP& http, String& jumpStr);
+    void CMD_chanfeedlog(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_clear(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_clearlog(const char* cmd, HTTP& http, String& jumpStr);
     void CMD_control_rtmp(const char* cmd, HTTP& http, String& jumpStr);

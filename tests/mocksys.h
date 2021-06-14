@@ -124,6 +124,15 @@ public:
     {
         return "";
     }
+
+    IP getInterfaceIPv4Address() const override
+    {
+        return IP::parse("192.168.0.2");
+    }
+
+    void rename(const std::string&, const std::string&) override
+    {
+    }
 };
 
 #endif

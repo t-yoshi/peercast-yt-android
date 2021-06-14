@@ -30,6 +30,7 @@
 #include "str.h"
 #include "cgi.h"
 #include "template.h"
+#include "public.h"
 #include "assets.h"
 #include "uptest.h"
 #include "gnutella.h"
@@ -312,7 +313,7 @@ void Servent::handshakeGET(HTTP &http)
         if (!isAllowed(ALLOW_HTML))
             throw HTTPException(HTTP_SC_UNAVAILABLE, 503);
 
-        if (handshakeAuth(http, fn, true))
+        if (handshakeAuth(http, fn))
             handshakeLocalFile(dirName, http);
     }else if (strncmp(fn, "/admin.cgi", 10) == 0)
     {
@@ -413,6 +414,27 @@ void Servent::handshakeGET(HTTP &http)
             http.writeLine("");
             http.writeString(response.c_str());
         }
+    }else if (strcmp(fn, "/public")== 0 ||
+              strncmp(fn, "/public/", strlen("/public/"))==0)
+    {
+        // 公開ディレクトリ
+
+        http.readHeaders();
+
+        if (!servMgr->publicDirectoryEnabled)
+        {
+            throw HTTPException(HTTP_SC_FORBIDDEN, 403);
+        }
+
+        try
+        {
+            PublicController controller(peercastApp->getPath() + std::string("public"));
+            http.send(controller(http.getRequest(), *sock, sock->host));
+        } catch (GeneralException& e)
+        {
+            LOG_ERROR("Error: %s", e.msg);
+            throw HTTPException(HTTP_SC_SERVERERROR, 500);
+        }
     }else if (str::is_prefix_of("/assets/", fn))
     {
         // html と public の共有アセット。
@@ -443,7 +465,7 @@ void Servent::handshakeGET(HTTP &http)
                 http.readHeaders();
                 invokeCGIScript(http, fn);
             }
-        }else if (handshakeAuth(http, fn, true))
+        }else if (handshakeAuth(http, fn))
         {
             invokeCGIScript(http, fn);
         }
@@ -475,7 +497,7 @@ void Servent::handshakePOST(HTTP &http)
 
     std::string path = vec2[0];
 
-    if (strcmp(path.c_str(), "/api/1") == 0)
+    if (path == "/api/1")
     {
         // JSON API
 
@@ -484,7 +506,7 @@ void Servent::handshakePOST(HTTP &http)
 
         if (handshakeHTTPBasicAuth(http))
             handshakeJRPC(http);
-    }else if (strcmp(path.c_str(), "/") == 0)
+    }else if (path == "/")
     {
         // HTTP Push
 
@@ -495,6 +517,15 @@ void Servent::handshakePOST(HTTP &http)
             throw HTTPException(HTTP_SC_FORBIDDEN, 403);
 
         handshakeHTTPPush(args);
+    }else if (path == "/admin")
+    {
+        if (!isAllowed(ALLOW_HTML))
+            throw HTTPException(HTTP_SC_UNAVAILABLE, 503);
+
+        http.readHeaders();
+        auto req = http.getRequest();
+        LOG_DEBUG("Admin (POST)");
+        handshakeCMD(http, req.body);
     }else
     {
         http.readHeaders();
@@ -659,9 +690,9 @@ void Servent::handshakeIncoming()
     bool isHTTP = (stristr(buf, HTTP_PROTO1) != NULL);
 
     if (isHTTP)
-        LOG_DEBUG("HTTP from %s '%s'", sock->host.str().c_str(), buf);
+        LOG_TRACE("HTTP from %s '%s'", sock->host.str().c_str(), buf);
     else
-        LOG_DEBUG("Connect from %s '%s'", sock->host.str().c_str(), buf);
+        LOG_TRACE("Connect from %s '%s'", sock->host.str().c_str(), buf);
 
     HTTP http(*sock);
     http.initRequest(buf);
@@ -685,7 +716,7 @@ void Servent::triggerChannel(char *str, ChanInfo::PROTOCOL proto, bool relay)
 
     outputProtocol = proto;
 
-    processStream(false, info);
+    processStream(info);
 }
 
 // -----------------------------------
@@ -791,80 +822,61 @@ bool Servent::handshakeHTTPBasicAuth(HTTP &http)
 }
 
 // -----------------------------------
-bool Servent::handshakeAuth(HTTP &http, const char *args, bool local)
+bool Servent::handshakeAuth(HTTP &http, const char *args)
 {
-    char user[64], pass[64];
-    user[0] = pass[0] = 0;
+    std::string user, pass;
 
-    const char *pwd  = getCGIarg(args, "pass=");
-
-    if ((pwd) && strlen(servMgr->password))
-    {
-        String tmp = pwd;
-        char *as = strstr(tmp.cstr(), "&");
-        if (as) *as = 0;
-        if (strcmp(tmp, servMgr->password) == 0)
-        {
-            http.readHeaders();
-            return true;
-        }
-    }
-
-    while (http.nextHeader())
-    {
-        char *arg = http.getArgStr();
-        if (!arg)
-            continue;
-
-        switch (servMgr->authType)
-        {
-            case ServMgr::AUTH_HTTPBASIC:
-                if (http.isHeader("Authorization"))
-                    http.getAuthUserPass(user, pass, sizeof(user), sizeof(pass));
-                break;
-            case ServMgr::AUTH_COOKIE:
-                if (http.isHeader("Cookie"))
-                {
-                    LOG_DEBUG("Got cookie: %s", arg);
-                    const std::string idKey = str::STR(servMgr->serverHost.port, "_id");
-                    auto assignments = str::split(arg, "; ");
-
-                    for (auto assignment : assignments) {
-                        auto sides = str::split(assignment, "=", 2);
-                        if (sides.size() != 2) {
-                            LOG_ERROR("Invalid Cookie header: expected '='");
-                            break;
-                        } else if (sides[0] == idKey) {
-                            Cookie gotCookie;
-                            gotCookie.set(sides[1].c_str(), sock->host.ip);
-
-                            if (servMgr->cookieList.contains(gotCookie)) {
-                                LOG_DEBUG("Cookie found");
-                                cookie = gotCookie;
-                            }
-                            break;
-                        }
-                    }
-                }
-                break;
-        }
-    }
+    http.readHeaders();
 
     if (sock->host.isLocalhost())
         return true;
 
-    switch (servMgr->authType)
+    cgi::Query query(args);
+    if (strlen(servMgr->password) && query.get("pass") == servMgr->password)
     {
-        case ServMgr::AUTH_HTTPBASIC:
-            if ((strcmp(pass, servMgr->password) == 0) && strlen(servMgr->password))
-                return true;
-            break;
-        case ServMgr::AUTH_COOKIE:
-            if (servMgr->cookieList.contains(cookie))
-                return true;
-            break;
+        return true;
     }
 
+    switch (servMgr->authType)
+    {
+    case ServMgr::AUTH_HTTPBASIC:
+        if (http.headers.get("Authorization") != "") {
+            HTTP::parseAuthorizationHeader(http.headers.get("Authorization"), user, pass);
+            if (strlen(servMgr->password) && pass == servMgr->password) {
+                return true;
+            }
+        }
+        break;
+    case ServMgr::AUTH_COOKIE:
+        if (http.headers.get("Cookie") != "")
+        {
+            auto arg = http.headers.get("Cookie");
+            LOG_TRACE("Got cookie: %s", arg.c_str());
+            const std::string idKey = str::STR(servMgr->serverHost.port, "_id");
+            auto assignments = str::split(arg, "; ");
+
+            for (auto assignment : assignments) {
+                auto sides = str::split(assignment, "=", 2);
+                if (sides.size() != 2) {
+                    LOG_ERROR("Invalid Cookie header: expected '='");
+                    break;
+                } else if (sides[0] == idKey) {
+                    Cookie gotCookie;
+                    gotCookie.set(sides[1].c_str(), sock->host.ip);
+                    cookie = gotCookie;
+                    break;
+                }
+            }
+
+            if (servMgr->cookieList.contains(cookie)){
+                LOG_TRACE("Cookie ID found");
+                return true;
+            }
+        }
+        break;
+    }
+
+    // Auth failure
     if (servMgr->authType == ServMgr::AUTH_HTTPBASIC)
     {
         http.writeLine(HTTP_SC_UNAUTHORIZED);
@@ -887,29 +899,58 @@ bool Servent::handshakeAuth(HTTP &http, const char *args, bool local)
 }
 
 // -----------------------------------
+#include "sstream.h"
+#include "defer.h"
+extern thread_local std::vector<std::function<void(LogBuffer::TYPE type, const char*)>> AUX_LOG_FUNC_VECTOR;
+static std::string runProcess(std::function<void(Stream&)> action)
+{
+    StringStream ss;
+    try {
+        AUX_LOG_FUNC_VECTOR.push_back([&](LogBuffer::TYPE type, const char* msg) -> void
+                                      {
+                                          if (type == LogBuffer::T_ERROR)
+                                              ss.writeString("Error: ");
+                                          else if (type == LogBuffer::T_WARN)
+                                              ss.writeString("Warning: ");
+                                          ss.writeLine(msg);
+                                      });
+        Defer defer([]() { AUX_LOG_FUNC_VECTOR.pop_back(); });
+
+        action(ss);
+    } catch(GeneralException& e) {
+        ss.writeLineF("Error: %s\n", e.what());
+    }
+    return ss.str();
+}
+
+// -----------------------------------
 void Servent::CMD_portcheck4(const char* cmd, HTTP& http, String& jumpStr)
 {
-    servMgr->checkFirewall();
-    if (!http.headers.get("Referer").empty())
-    {
-        jumpStr.sprintf("%s", http.headers.get("Referer").c_str());
-    }else
-    {
-        jumpStr.sprintf("/%s/index.html", servMgr->htmlPath);
-    }
+    auto output = runProcess([](Stream& s)
+                             {
+                                 servMgr->setFirewall(4, ServMgr::FW_UNKNOWN);
+                                 servMgr->checkFirewall();
+                                 s.writeLineF("IPv4 firewall is %s",
+                                              ServMgr::getFirewallStateString(servMgr->getFirewall(4)));
+                             });
+
+    auto res = HTTPResponse::ok({ {"Content-Type", "text/plain; charset=UTF-8"} }, output);
+    http.send(res);
 }
 
 // -----------------------------------
 void Servent::CMD_portcheck6(const char* cmd, HTTP& http, String& jumpStr)
 {
-    servMgr->checkFirewallIPv6();
-    if (!http.headers.get("Referer").empty())
-    {
-        jumpStr.sprintf("%s", http.headers.get("Referer").c_str());
-    }else
-    {
-        jumpStr.sprintf("/%s/index.html", servMgr->htmlPath);
-    }
+    auto output = runProcess([](Stream& s)
+                             {
+                                 servMgr->setFirewall(6, ServMgr::FW_UNKNOWN);
+                                 servMgr->checkFirewallIPv6();
+                                 s.writeLineF("IPv6 firewall is %s",
+                                              ServMgr::getFirewallStateString(servMgr->getFirewall(6)));
+                             });
+
+    auto res = HTTPResponse::ok({ {"Content-Type", "text/plain; charset=UTF-8"} }, output);
+    http.send(res);
 }
 
 // -----------------------------------
@@ -966,9 +1007,10 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
     servMgr->numFilters = 0;
     ServFilter *currFilter = servMgr->filters;
     servMgr->channelDirectory->clearFeeds();
+    servMgr->publicDirectoryEnabled = false;
     servMgr->transcodingEnabled = false;
     servMgr->chat = false;
-    servMgr->randomizeBroadcastingChannelID = false;
+    servMgr->flags.get("randomizeBroadcastingChannelID") = false;
 
     bool brRoot = false;
     bool getUpd = false;
@@ -1086,9 +1128,9 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
         else if (strcmp(curr, "chat") == 0)
             servMgr->chat = getCGIargBOOL(arg);
         else if (strcmp(curr, "randomizechid") == 0)
-            servMgr->randomizeBroadcastingChannelID = getCGIargBOOL(arg);
-        else if (strcmp(curr, "genreprefix") == 0)
-            servMgr->genrePrefix = arg;
+            servMgr->flags.get("randomizeBroadcastingChannelID") = getCGIargBOOL(arg);
+        else if (strcmp(curr, "public_directory") == 0)
+            servMgr->publicDirectoryEnabled = true;
         else if (strcmp(curr, "auth") == 0)
         {
             if (strcmp(arg, "cookie") == 0)
@@ -1136,7 +1178,7 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
             ipstr =  vec[0]+":"+std::to_string(newPort);
         }else
         {
-            ipstr = Host(ClientSocket::getIP(NULL), newPort).str();
+            ipstr = Host(sys->getInterfaceIPv4Address(), newPort).str();
         }
         jumpStr.sprintf("http://%s/%s/settings.html", ipstr.c_str(), servMgr->htmlPath);
 
@@ -1155,6 +1197,28 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
 
     if ((servMgr->isRoot) && (brRoot))
         servMgr->broadcastRootSettings(getUpd);
+}
+
+void Servent::CMD_applyflags(const char* cmd, HTTP& http, String& jumpStr)
+{
+    std::lock_guard<std::recursive_mutex> cs(servMgr->lock);
+
+    cgi::Query query(cmd);
+
+    servMgr->flags.forEachFlag([&](Flag& flag)
+    {
+        if (query.get(flag.name) == "") {
+            flag.currentValue = false;
+        } else {
+            flag.currentValue = true;
+        }
+    });
+
+    peercastInst->saveSettings();
+    peercast::notifyMessage(ServMgr::NT_PEERCAST, "設定を保存しました。");
+    peercastApp->updateSettings();
+
+    jumpStr.sprintf("/%s/flags.html", servMgr->htmlPath);
 }
 
 void Servent::CMD_fetch(const char* cmd, HTTP& http, String& jumpStr)
@@ -1176,7 +1240,7 @@ void Servent::CMD_fetch(const char* cmd, HTTP& http, String& jumpStr)
 
     // id がセットされていないチャンネルがあるといろいろまずいので、事
     // 前に設定してから登録する。
-    if (servMgr->randomizeBroadcastingChannelID) {
+    if (servMgr->flags.get("randomizeBroadcastingChannelID")) {
         info.id = GnuID::random();
     } else {
         info.id = chanMgr->broadcastID;
@@ -1231,6 +1295,22 @@ void Servent::CMD_stop_servent(const char* cmd, HTTP& http, String& jumpStr)
     {
         http.send(HTTPResponse::notFound("servent not found"));
         return;
+    }
+}
+
+void Servent::CMD_chanfeedlog(const char* cmd, HTTP& http, String& jumpStr)
+{
+    cgi::Query query(cmd);
+    int index = atoi(query.get("index").c_str());
+
+    try {
+        HTTPResponse res(200, { {"Content-Type","text/plain; charset=UTF-8"} });
+        res.body = servMgr->channelDirectory->feeds().at(index).log;
+        http.send(res);
+    } catch (std::out_of_range& e) {
+        HTTPResponse res(404, { {"Content-Type","text/plain; charset=UTF-8"} });
+        res.body = e.what();
+        http.send(res);
     }
 }
 
@@ -1749,15 +1829,11 @@ void Servent::CMD_speedtest_cached_xml(const char* cmd, HTTP& http, String& jump
     }
 }
 
-void Servent::handshakeCMD(HTTP& http, char *q)
+void Servent::handshakeCMD(HTTP& http, const std::string& query)
 {
     String jumpStr;
 
-    // q が http.cmdLine の一部を指しているので、http の操作に伴って変
-    // 更されるため、コピーしておく。
-    std::string query = q;
-
-    if (!handshakeAuth(http, query.c_str(), true))
+    if (!handshakeAuth(http, query.c_str()))
         return;
 
     std::string cmd = cgi::Query(query).get("cmd");
@@ -1770,9 +1846,15 @@ void Servent::handshakeCMD(HTTP& http, char *q)
         }else if (cmd == "apply")
         {
             CMD_apply(query.c_str(), http, jumpStr);
+        }else if (cmd == "applyflags")
+        {
+            CMD_applyflags(query.c_str(), http, jumpStr);
         }else if (cmd == "bump")
         {
             CMD_bump(query.c_str(), http, jumpStr);
+        }else if (cmd == "chanfeedlog")
+        {
+            CMD_chanfeedlog(query.c_str(), http, jumpStr);
         }else if (cmd == "clear")
         {
             CMD_clear(query.c_str(), http, jumpStr);
@@ -2087,7 +2169,7 @@ void Servent::handshakeWMHTTPPush(HTTP& http, const std::string& path)
     if (vec.size() > 2) info.desc  = vec[2];
     if (vec.size() > 3) info.url   = vec[3];
 
-    if (servMgr->randomizeBroadcastingChannelID) {
+    if (servMgr->flags.get("randomizeBroadcastingChannelID")) {
         info.id = GnuID::random();
     } else {
         info.id = chanMgr->broadcastID;
@@ -2130,7 +2212,7 @@ ChanInfo Servent::createChannelInfo(GnuID broadcastID, const String& broadcastMs
     info.bitrate = atoi(query.get("bitrate").c_str());
     info.comment = query.get("comment").empty() ? broadcastMsg : query.get("comment");
 
-    if (servMgr->randomizeBroadcastingChannelID) {
+    if (servMgr->flags.get("randomizeBroadcastingChannelID")) {
         info.id = GnuID::random();
     } else {
         info.id = broadcastID;
@@ -2215,7 +2297,7 @@ void Servent::handshakeICY(Channel::SRC_TYPE type, bool isHTTP)
     // attach channel ID to name, channel ID is also encoded with IP address
     // to help prevent channel hijacking.
 
-    if (servMgr->randomizeBroadcastingChannelID) {
+    if (servMgr->flags.get("randomizeBroadcastingChannelID")) {
         info.id = GnuID::random();
     } else {
         info.id = chanMgr->broadcastID;
@@ -2270,7 +2352,7 @@ const char* Servent::fileNameToMimeType(const String& fileName)
 static void validFileOrThrow(const char* filePath, const std::string& documentRoot)
 {
     ASSERT(documentRoot.size() > 0);
-    ASSERT(documentRoot.back() == '/');
+    ASSERT(documentRoot.back() == sys->getDirectorySeparator()[0]);
 
     std::string abspath;
     try {
@@ -2291,12 +2373,17 @@ static void validFileOrThrow(const char* filePath, const std::string& documentRo
 void Servent::handshakeLocalFile(const char *fn, HTTP& http)
 {
     std::string documentRoot;
-    documentRoot = sys->realPath(peercastApp->getPath()) + "/";
+    try {
+        documentRoot = sys->realPath(peercastApp->getPath()) + sys->getDirectorySeparator();
+    } catch (GeneralException &e) {
+        LOG_ERROR("documentRoot: %s (%s)", e.what(), peercastApp->getPath());
+        throw HTTPException(HTTP_SC_SERVERERROR, 500);
+    }
 
     String fileName = documentRoot.c_str();
     fileName.append(fn);
 
-    LOG_DEBUG("Writing HTML file: %s", fileName.cstr());
+    LOG_TRACE("Writing HTML file: %s", fileName.cstr());
 
     WriteBufferedStream bufferedSock(sock.get());
     HTML html("", bufferedSock);

@@ -3,6 +3,7 @@
 
 #include "jrpc.h"
 #include "str.h"
+#include "hostgraph.h"
 
 using namespace std;
 using json = nlohmann::json;
@@ -711,7 +712,7 @@ json JrpcApi::getStatus(json::array_t)
 {
     std::string globalIP = servMgr->serverHost.IPtoStr();
     auto port            = servMgr->serverHost.port;
-    std::string localIP  = Host(ClientSocket::getIP(NULL), port).IPtoStr();
+    std::string localIP  = Host(sys->getInterfaceIPv4Address(), port).IPtoStr();
 
     json j = {
         { "uptime", servMgr->getUptime() },

@@ -1028,7 +1028,7 @@ void Servent::writeHeloAtom(AtomStream &atom, bool sendPort, bool sendPing, bool
 void Servent::handshakeOutgoingPCP(AtomStream &atom, Host &rhost, GnuID &rid, String &agent, bool isTrusted)
 {
     int ipv = rhost.ip.isIPv4Mapped() ? 4 : 6;
-    if (servMgr->sendPortAtomWhenFirewallUnknown)
+    if (servMgr->flags.get("sendPortAtomWhenFirewallUnknown"))
     {
         bool sendPort = (servMgr->getFirewall(ipv) != ServMgr::FW_ON);
         bool testFW   = (servMgr->getFirewall(ipv) == ServMgr::FW_UNKNOWN);
@@ -1601,17 +1601,12 @@ int Servent::incomingProc(ThreadInfo *thread)
 }
 
 // -----------------------------------
-void Servent::processStream(bool doneHandshake, ChanInfo &chanInfo)
+void Servent::processStream(ChanInfo &chanInfo)
 {
-    ASSERT(doneHandshake == false);
+    setStatus(S_HANDSHAKE);
 
-    if (!doneHandshake)
-    {
-        setStatus(S_HANDSHAKE);
-
-        if (!handshakeStream(chanInfo))
-            return;
-    }
+    if (!handshakeStream(chanInfo))
+        return;
 
     ASSERT(chanID.isSet());
 
@@ -1705,8 +1700,7 @@ void Servent::sendRawChannel(bool sendHead, bool sendData)
             unsigned int streamIndex = ch->streamIndex;
             unsigned int connectTime = sys->getTime();
             unsigned int lastWriteTime = connectTime;
-            bool         skipContinuation = true;
-            int          sendSkipCount = 0;
+            bool         skipContinuation = servMgr->flags.get("startPlayingFromKeyFrame");
 
             while ((thread.active()) && sock->active())
             {
@@ -1727,15 +1721,7 @@ void Servent::sendRawChannel(bool sendHead, bool sendData)
                 while (ch->rawData.findPacket(streamPos, rawPack))
                 {
                     if (syncPos != rawPack.sync)
-                    {
-                        if (sendSkipCount)
-                        {
-                            LOG_ERROR("Send skip: %d", rawPack.sync - syncPos);
-                            throw TimeoutException();
-                        }else
-                            LOG_DEBUG("First send skip: %d", rawPack.sync - syncPos);
-                        sendSkipCount++;
-                    }
+                        LOG_ERROR("Send skip: %d", rawPack.sync-syncPos);
                     syncPos = rawPack.sync + 1;
 
                     if ((rawPack.type == ChanPacket::T_DATA) || (rawPack.type == ChanPacket::T_HEAD))
@@ -1747,7 +1733,9 @@ void Servent::sendRawChannel(bool sendHead, bool sendData)
                             lastWriteTime = sys->getTime();
                         }else
                         {
-                            LOG_DEBUG("raw: skip continuation %s packet pos=%d", rawPack.type==ChanPacket::T_DATA?"DATA":"HEAD", rawPack.pos);
+                            LOG_DEBUG("raw: skip continuation %s packet pos=%d",
+                                      (rawPack.type == ChanPacket::T_DATA) ? "DATA" : "HEAD",
+                                      rawPack.pos);
                         }
                     }
 
@@ -1925,7 +1913,6 @@ void Servent::sendPCPChannel()
             }
 
         unsigned int streamIndex = ch->streamIndex;
-        int          sendSkipCount = 0;
 
         while (thread.active())
         {
@@ -1949,18 +1936,6 @@ void Servent::sendPCPChannel()
             // FIXME: ストリームインデックスの変更を確かめずにどんどん読み出して大丈夫？
             while (ch->rawData.findPacket(streamPos, rawPack))
             {
-                if (syncPos != rawPack.sync)
-                {
-                    if (sendSkipCount)
-                    {
-                        LOG_ERROR("PCP send skip: %d", rawPack.sync - syncPos);
-                        throw TimeoutException();
-                    }else
-                        LOG_DEBUG("PCP first send skip: %d", rawPack.sync - syncPos);
-                    sendSkipCount++;
-                }
-                syncPos = rawPack.sync + 1;
-
                 if (rawPack.type == ChanPacket::T_HEAD)
                 {
                     atom.writeParent(PCP_CHAN, 2);

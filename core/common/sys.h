@@ -92,6 +92,8 @@ public:
         out = "";
         return false;
     }
+
+    virtual IP getInterfaceIPv4Address() const;
     
 #if _BYTE_ORDER == _BIG_ENDIAN
     unsigned short  convertEndian(unsigned short v) { return SWAP2(v); }
@@ -126,6 +128,13 @@ public:
     }
 
     virtual std::string realPath(const std::string& path) = 0;
+
+    virtual std::string getDirectorySeparator()
+    {
+        return "/";
+    }
+
+    virtual void rename(const std::string& oldpath, const std::string& newpath) = 0;
 
     unsigned int idleSleepTime;
 
