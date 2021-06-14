@@ -38,8 +38,13 @@ ServMgr::ServMgr()
     : relayBroadcast(30) // オリジナルでは未初期化。
     , channelDirectory(new ChannelDirectory())
     , uptestServiceRegistry(new UptestServiceRegistry())
+#ifdef WIN32
     , rtmpServerMonitor(std::string(peercastApp->getPath()) + "rtmp-server")
+#else
+    , rtmpServerMonitor(sys->joinPath({ sys->dirname(sys->getExecutablePath()), "rtmp-server" }))
+#endif
     , randomizeBroadcastingChannelID(true)
+    , sendPortAtomWhenFirewallUnknown(true)
 {
     authType = AUTH_COOKIE;
     cookieList.init();
@@ -687,13 +692,13 @@ bool ServMgr::checkForceIP()
 // -----------------------------------
 void ServMgr::checkFirewall()
 {
-    if ((getFirewall(4) == FW_UNKNOWN) && !servMgr->rootHost.isEmpty())
+    if (!servMgr->rootHost.isEmpty())
     {
         LOG_DEBUG("Checking firewall..");
         Host host;
         host.fromStrName(servMgr->rootHost.cstr(), DEFAULT_PORT);
 
-        ClientSocket *sock = sys->createSocket();
+        auto sock = sys->createSocket();
         if (!sock)
             throw StreamException("Unable to create socket");
         sock->setReadTimeout(30000);
@@ -711,7 +716,6 @@ void ServMgr::checkFirewall()
         atom.writeInt(PCP_QUIT, PCP_ERROR_QUIT);
 
         sock->close();
-        delete sock;
     }
 }
 
@@ -799,17 +803,21 @@ void ServMgr::checkFirewallIPv6()
     }
 #endif
 
-    if (getFirewall(6) != FW_UNKNOWN) // is this reasonable?
-        return;
-
     IPv6PortChecker checker;
-    LOG_DEBUG("Checking firewall.. (IPv6)");
-    auto result = checker.run({serverHost.port});
-    LOG_DEBUG("%s %s", result.ip.str().c_str(), std::to_string(result.ports.size()).c_str());
-    if (result.ports.size()) {
-        setFirewall(6, FW_OFF);
-    } else {
-        setFirewall(6, FW_ON);
+
+    try {
+        LOG_DEBUG("Checking firewall.. (IPv6)");
+        auto result = checker.run({serverHost.port});
+        LOG_DEBUG("%s %s", result.ip.str().c_str(), std::to_string(result.ports.size()).c_str());
+        if (result.ports.size()) {
+            setFirewall(6, FW_OFF);
+        } else {
+            setFirewall(6, FW_ON);
+        }
+    } catch (SockException& e) {
+        // network unreachable etc
+        LOG_ERROR("checkFirewallIPv6: %s", e.what());
+        setFirewall(6, FW_UNKNOWN);
     }
 }
 
@@ -942,7 +950,6 @@ void ServMgr::doSaveSettings(IniFileBase& iniFile)
     iniFile.writeIntValue("maxServIn", this->maxServIn);
     iniFile.writeStrValue("chanLog", this->chanLog);
     iniFile.writeStrValue("networkID", networkID.str());
-    iniFile.writeBoolValue("randomizeBroadcastingChannelID", randomizeBroadcastingChannelID);
 
     iniFile.writeSection("Broadcast");
     iniFile.writeIntValue("broadcastMsgInterval", chanMgr->broadcastMsgInterval);
@@ -1024,6 +1031,10 @@ void ServMgr::doSaveSettings(IniFileBase& iniFile)
         if (sh->type != ServHost::T_NONE)
             writeServHost(iniFile, *sh);
     }
+
+    iniFile.writeSection("Flags");
+    iniFile.writeBoolValue("randomizeBroadcastingChannelID", randomizeBroadcastingChannelID);
+    iniFile.writeBoolValue("sendPortAtomWhenFirewallUnknown", sendPortAtomWhenFirewallUnknown);
 }
 
 // --------------------------------------------------
@@ -1108,8 +1119,6 @@ void ServMgr::loadSettings(const char *fn)
                 chanMgr->broadcastID.fromStr(iniFile.getStrValue());
             }else if (iniFile.isName("htmlPath"))
                 strcpy(servMgr->htmlPath, iniFile.getStrValue());
-            else if (iniFile.isName("randomizeBroadcastingChannelID"))
-                servMgr->randomizeBroadcastingChannelID = iniFile.getBoolValue();
             else if (iniFile.isName("maxControlConnections"))
             {
                 servMgr->maxControl = iniFile.getIntValue();
@@ -1353,6 +1362,12 @@ void ServMgr::loadSettings(const char *fn)
                 }
                 servMgr->addHost(h, type, time);
             }
+
+            // Experimental feature flags
+            else if (iniFile.isName("randomizeBroadcastingChannelID"))
+                servMgr->randomizeBroadcastingChannelID = iniFile.getBoolValue();
+            else if (iniFile.isName("sendPortAtomWhenFirewallUnknown"))
+                servMgr->sendPortAtomWhenFirewallUnknown = iniFile.getBoolValue();
         }
     }
 
@@ -1603,7 +1618,7 @@ int ServMgr::clientProc(ThreadInfo *thread)
 }
 
 // -----------------------------------
-bool    ServMgr::acceptGIV(ClientSocket *sock)
+bool    ServMgr::acceptGIV(std::shared_ptr<ClientSocket> sock)
 {
     std::lock_guard<std::recursive_mutex> cs(lock);
 
@@ -1905,6 +1920,8 @@ bool ServMgr::writeVariable(Stream &out, const String &var)
 
     if (var == "version")
         buf = PCX_VERSTRING;
+    else if (var == "buildDateTime")
+        buf = __DATE__ " " __TIME__;
     else if (var == "uptime")
     {
         String str;

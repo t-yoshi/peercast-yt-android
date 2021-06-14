@@ -50,9 +50,9 @@ double WSys::getDTime()
 }
 
 // ---------------------------------
-ClientSocket *WSys::createSocket()
+std::shared_ptr<ClientSocket> WSys::createSocket()
 {
-    return new WSAClientSocket();
+    return std::make_shared<WSAClientSocket>();
 }
 
 // --------------------------------------------------
@@ -181,4 +181,31 @@ bool WSys::getHostnameByAddress(const IP& ip, std::string& out)
             return true;
         }
     }
+}
+
+// ---------------------------------
+std::string WSys::getExecutablePath()
+{
+    char path[1024];
+    if (GetModuleFileNameA(NULL, path, sizeof(path)) == 0) {
+        throw GeneralException(str::format("%s: %d", __func__, GetLastError()).c_str());
+    }
+    return path;
+}
+
+// ---------------------------------
+#include "Shlwapi.h"
+std::string WSys::realPath(const std::string& path)
+{
+    char resolvedPath[4096];
+    char* ret = _fullpath(resolvedPath, path.c_str(), 4096);
+    if (ret == NULL)
+    {
+        throw GeneralException(str::format("_fullpath: Failed to resolve `%s`", path.c_str()).c_str());
+    }
+
+    if (PathFileExistsA(resolvedPath))
+        return resolvedPath;
+    else
+        throw GeneralException(str::format("realPath: File not found: %s", resolvedPath).c_str());
 }
