@@ -49,6 +49,8 @@ public:
     virtual Sys *   APICALL createSys()=0;
 
     std::atomic_bool isQuitting;
+
+    virtual ~PeercastInstance() = default;
 };
 
 // ------------------------------------------------------------
@@ -71,6 +73,8 @@ public:
     virtual void    APICALL channelStart(ChanInfo *) {}
     virtual void    APICALL channelStop(ChanInfo *) {}
     virtual void    APICALL channelUpdate(ChanInfo *) {}
+
+    virtual ~PeercastApplication() = default;
 };
 
 // ----------------------------------
