@@ -939,7 +939,6 @@ void ChanMeta::addMem(void *p, int l)
 }
 
 // -----------------------------------
-#include <random>
 void Channel::writeTrackerUpdateAtom(AtomStream& atom)
 {
     ChanHitList *chl = chanMgr->findHitListByID(info.id);
@@ -1344,8 +1343,8 @@ std::string Channel::getBufferString()
     {
         auto pmax = std::max_element(lens.begin(), lens.end());
         auto pmin = std::min_element(lens.begin(), lens.end());
-        buf += str::format("Packet length min/avg/max: %u/%lu/%u\n",
-                           *pmin, (unsigned long) sum/lens.size(), *pmax);
+        buf += str::format("Packet length min/avg/max: %u/%d/%u\n",
+                           *pmin, static_cast<int>(sum/lens.size()), *pmax);
     }
     buf += str::format("Last written: %s", time.str().c_str());
 
