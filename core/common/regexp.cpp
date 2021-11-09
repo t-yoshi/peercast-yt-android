@@ -3,8 +3,8 @@
 #include <stdexcept>
 
 Regexp::Regexp(const std::string& exp)
-    : m_exp(exp)
-    , m_reg(exp.c_str())
+    : m_reg(exp.c_str())
+    , m_exp(exp)
 {
 }
 
@@ -24,7 +24,7 @@ std::vector<std::string> Regexp::exec(const std::string& str) const
     {
         std::vector<std::string> v;
 
-        for (int i = 0; i < m.size(); i++)
+        for (size_t i = 0; i < m.size(); i++)
             v.push_back(m[i].str());
         return v;
     }else

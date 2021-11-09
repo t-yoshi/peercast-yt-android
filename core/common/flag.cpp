@@ -25,8 +25,8 @@ Flag::Flag(const std::string& aName,
 }
 
 Flag::Flag(const Flag& other)
-    : desc(other.desc)
-    , name(other.name)
+    : name(other.name)
+    , desc(other.desc)
     , defaultValue(other.defaultValue)
     , currentValue(other.currentValue.load())
 {
@@ -35,7 +35,7 @@ Flag::Flag(const Flag& other)
 FlagRegistory::FlagRegistory(std::vector<Flag>&& flags)
     : m_flags(flags)
 {
-    for (int i = 0; i < m_flags.size(); ++i) {
+    for (size_t i = 0; i < m_flags.size(); ++i) {
         m_indices[m_flags[i].name] = i;
     }
 }

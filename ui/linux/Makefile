@@ -1,13 +1,13 @@
 # Uncomment following line to enabled RTMP fetch support
 WITH_RTMP = yes
 
-CPPFLAGS = -g -Wreturn-type -Wno-multichar -Wno-unused-variable -std=c++11 -D_UNIX -D_REENTRANT -DADD_BACKTRACE $(INCLUDES)
+CPPFLAGS = -g -Wall -std=c++11 -D_UNIX -D_REENTRANT -DADD_BACKTRACE $(INCLUDES) $(shell pkg-config openssl --cflags)
 ifeq ($(WITH_RTMP),yes)
   CPPFLAGS += -DWITH_RTMP
 endif
 
 LDFLAGS = -fuse-ld=gold -pthread -rdynamic
-LIBS = 
+LIBS = $(shell pkg-config openssl --libs)
 ifeq ($(WITH_RTMP),yes)
   LIBS += -lrtmp
 endif
@@ -63,7 +63,8 @@ sharedir=$(PREFIX)/share/peercast
 # Here follow the generic build rules.
 all: $(TARGET) $(LIBOBJSTATIC) $(DISTARCHIVE) $(RTMPSERVER)
 
-deps: $(DEPENDFILE)
+deps:
+	$(CXX) $(CPPFLAGS) -MM $(CORESOURCE) $(SYSSOURCE) $(LINUXSOURCE) $(RTMPSOURCE) > $(DEPENDFILE)
 
 $(SRCHTMLTAR):
 	$(MAKE) -C .. html.tar
@@ -89,7 +90,7 @@ $(DISTARCHIVE): $(TARGET) $(HTML) $(PUBLIC) $(ASSETS) $(RTMPSERVER)
 	strip peercast-yt/$(RTMPSERVER)
 	tar czf $(DISTARCHIVE) peercast-yt
 
-install: all
+install:
 	mkdir -p $(bindir)
 	cp -R $(TARGET) $(RTMPSERVER) $(bindir)
 	mkdir -p $(docdir)
@@ -124,9 +125,6 @@ $(SYSOBJ): %.o : $(CORE)/unix/%.cpp
 
 $(RTMPOBJ): %.o : $(RTMP)/%.cpp
 	$(CXX) $(CPPFLAGS) -c $< -o $@
-
-$(DEPENDFILE): $(CORESOURCE) $(SYSSOURCE) $(LINUXSOURCE) $(RTMPSOURCE)
-	$(CXX) $(CPPFLAGS) -MM $(CORESOURCE) $(SYSSOURCE) $(LINUXSOURCE) $(RTMPSOURCE) > $(DEPENDFILE)
 
 $(LIBOBJSTATIC): $(COREOBJ) $(SYSOBJ)
 	$(AR) rcs $(LIBOBJSTATIC) $(COREOBJ) $(SYSOBJ)

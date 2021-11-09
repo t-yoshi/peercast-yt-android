@@ -59,7 +59,7 @@ std::shared_ptr<ClientSocket> WSys::createSocket()
 void WSys::callLocalURL(const char *str,int port)
 {
     char cmd[512];
-    sprintf(cmd,"http://localhost:%d/%s",port,str);
+    snprintf(cmd, sizeof(cmd), "http://localhost:%d/%s", port, str);
     ShellExecuteA(mainWindow, NULL, cmd, NULL, NULL, SW_SHOWNORMAL);
 }
 
@@ -129,6 +129,7 @@ std::vector<std::string> WSys::getIPAddresses(const std::string& name)
             break;
         }
     }
+    freeaddrinfo(result);
     return addrs;
 }
 
@@ -155,10 +156,11 @@ bool WSys::getHostnameByAddress(const IP& ip, std::string& out)
                         NULL,
                         0,
                         NI_NAMEREQD)) {
-            LOG_ERROR("getnameinfo: error code = %d", errcode);
+            LOG_TRACE("getnameinfo: error code = %d (%s)", errcode, ip.str().c_str());
             out = "";
             return false;
         } else {
+            LOG_TRACE("getnameinfo: %s (%s)", hbuf, ip.str().c_str());
             out = hbuf;
             return true;
         }
@@ -173,10 +175,11 @@ bool WSys::getHostnameByAddress(const IP& ip, std::string& out)
                         NULL,
                         0,
                         NI_NAMEREQD)) {
-            LOG_ERROR("getnameinfo: error code = %d", errcode);
+            LOG_TRACE("getnameinfo: error code = %d (%s)", errcode, ip.str().c_str());
             out = "";
             return false;
         } else {
+            LOG_TRACE("getnameinfo: %s (%s)", hbuf, ip.str().c_str());
             out = hbuf;
             return true;
         }

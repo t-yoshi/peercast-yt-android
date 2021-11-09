@@ -105,6 +105,12 @@ int MP4Stream::readPacket(Stream &in, std::shared_ptr<Channel> ch)
             throw StreamException("mdat expected");
         }
 
+        while (moof->size() + mdat->size() > m_bufferSize) {
+            m_bufferSize *= 2;
+            delete [] m_buffer;
+            m_buffer = new uint8_t[m_bufferSize];
+            LOG_TRACE("doubling buffer size (now %d bytes)", (int) m_bufferSize);
+        }
         memcpy(m_buffer, moof->data(), moof->size());
         memcpy(m_buffer + moof->size(), mdat->data(), mdat->size());
 
@@ -112,6 +118,14 @@ int MP4Stream::readPacket(Stream &in, std::shared_ptr<Channel> ch)
         ChanPacket pack;
         int rlen = moof->size() + mdat->size();
         bool firstTime = true;
+
+        double sleepSeconds;
+        if (rlen / MAX_OUTGOING_PACKET_SIZE > 0) 
+            sleepSeconds = 1.0 / (rlen / MAX_OUTGOING_PACKET_SIZE);
+        else
+            sleepSeconds = 0.0;
+
+        LOG_TRACE("sleepSeconds = %g", sleepSeconds);
 
         while (rlen)
         {
@@ -131,6 +145,8 @@ int MP4Stream::readPacket(Stream &in, std::shared_ptr<Channel> ch)
 
              rlen -= rl;
              firstTime = false;
+
+             sys->sleep(sleepSeconds * 1000);
         }
     } else {
          throw StreamException("moof expected");

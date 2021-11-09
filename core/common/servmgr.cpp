@@ -36,8 +36,8 @@
 // -----------------------------------
 ServMgr::ServMgr()
     : relayBroadcast(30) // オリジナルでは未初期化。
-    , publicDirectoryEnabled(false)
     , channelDirectory(new ChannelDirectory())
+    , publicDirectoryEnabled(false)
     , uptestServiceRegistry(new UptestServiceRegistry())
 #ifdef WIN32
     , rtmpServerMonitor(std::string(peercastApp->getPath()) + "rtmp-server")
@@ -117,7 +117,8 @@ ServMgr::ServMgr()
 
     restartServer=false;
 
-    setFilterDefaults();
+    numFilters = 0;
+    ensureCatchallFilters();
 
     servents = NULL;
 
@@ -216,13 +217,33 @@ void    ServMgr::connectBroadcaster()
 }
 
 // -----------------------------------
-void ServMgr::setFilterDefaults()
+void ServMgr::ensureCatchallFilters()
 {
-    numFilters = 0;
+    bool hasV4Catchall = false;
+    bool hasV6Catchall = false;
 
-    filters[numFilters].setPattern("255.255.255.255");
-    filters[numFilters].flags = ServFilter::F_NETWORK|ServFilter::F_DIRECT;
-    numFilters++;
+    for (int i = 0; i < numFilters; i++)
+    {
+        if (filters[i].getPattern() == "255.255.255.255")
+            hasV4Catchall = true;
+        else if (filters[i].getPattern() == "::/0")
+            hasV6Catchall = true;
+    }
+
+    if (!hasV4Catchall)
+    {
+        filters[numFilters].setPattern("255.255.255.255");
+        filters[numFilters].flags = ServFilter::F_NETWORK|ServFilter::F_DIRECT;
+        numFilters++;
+    }
+    
+
+    if (!hasV6Catchall)
+    {
+        filters[numFilters].setPattern("::/0");
+        filters[numFilters].flags = ServFilter::F_NETWORK|ServFilter::F_DIRECT;
+        numFilters++;
+    }
 }
 
 // -----------------------------------
@@ -832,6 +853,7 @@ void ServMgr::checkFirewallIPv6()
         } else {
             setFirewall(6, FW_ON);
         }
+        updateIPAddress(result.ip);
     } catch (SockException& e) {
         // network unreachable etc
         LOG_ERROR("checkFirewallIPv6: %s", e.what());
@@ -1454,7 +1476,7 @@ void ServMgr::loadSettings(const char *fn)
                     } else {
                         try {
                             this->flags.get(iniFile.getName()) = iniFile.getBoolValue();
-                        } catch (std::out_of_range) {
+                        } catch (std::out_of_range&) {
                             LOG_ERROR("Flag %s not found", iniFile.getName());
                         }
                     }
@@ -1463,8 +1485,7 @@ void ServMgr::loadSettings(const char *fn)
         }
     }
 
-    if (!numFilters)
-        setFilterDefaults();
+    ensureCatchallFilters();
 }
 
 // --------------------------------------------------
@@ -2183,7 +2204,7 @@ bool ServMgr::writeVariable(Stream &out, const String &var)
     {
         try {
             buf = to_string(this->flags.get(var + strlen("flags.")));
-        } catch (std::out_of_range) {
+        } catch (std::out_of_range&) {
             return false;
         }
     } else if (var == "installationDirectory")

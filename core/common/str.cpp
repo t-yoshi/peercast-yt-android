@@ -192,6 +192,10 @@ std::string codepoint_to_utf8(uint32_t codepoint)
 #include <stdarg.h>
 std::string format(const char* fmt, ...)
 {
+    // 必要なバイト数の計算のために vsnprintf を呼び出し、実際に文字列
+    // を作るためにもう一度 vsnprintf を呼び出す。
+    // １度目の vsnprintf の呼び出しのあと ap の値は未定義になるので、
+    // ２度目の呼び出しのために aq にコピーしておく。
     va_list ap, aq;
     std::string res;
 
@@ -374,6 +378,29 @@ std::string rstrip(const std::string& str)
     return res;
 }
 
+std::string strip(const std::string& str)
+{
+    auto it = str.begin();
+    while (it != str.end()) {
+        auto c = *it;
+        if (c == ' ' || (c >= 0x09 && c <= 0x0d) || c == '\0')
+            it++;
+        else
+            break;
+    }
+    std::string res(it, str.end());
+
+    while (!res.empty()) {
+        auto c = res.back();
+        if (c == ' ' || (c >= 0x09 && c <= 0x0d) || c == '\0')
+            res.pop_back();
+        else
+            break;
+    }
+
+    return res;
+}
+
 std::string escapeshellarg_unix(const std::string& str)
 {
     std::string buf = "\'";
@@ -427,7 +454,7 @@ std::string indent_tab(const std::string& text, int n)
     auto lines = to_lines(text);
     auto space = repeat("\t", n);
 
-    for (int i = 0; i < lines.size(); ++i)
+    for (size_t i = 0; i < lines.size(); ++i)
         lines[i] = space + lines[i];
 
     return join("", lines);

@@ -74,8 +74,8 @@ public:
     char                *buf;
     unsigned int        *times;
     unsigned int        currLine;
-    const unsigned int  maxLines;
     const unsigned int  lineLen;
+    const unsigned int  maxLines;
     TYPE                *types;
     std::recursive_mutex lock;
     static const char   *logTypes[];

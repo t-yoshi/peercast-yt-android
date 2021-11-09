@@ -32,12 +32,14 @@
 #include <sys/wait.h> // WIFEXITED, WEXITSTATUS
 #include <thread>
 #include <stdio.h>
+#include <limits.h>
 
 #include "stats.h"
 #include "str.h"
 #include "usocket.h"
 #include "usys.h"
 #include "subprog.h"
+#include "strerror.h"
 
 // ---------------------------------
 USys::USys()
@@ -51,7 +53,7 @@ USys::USys()
         {
             int seed;
             char *p = (char*) &seed;
-            for (int i = 0; i < sizeof(int); i++)
+            for (size_t i = 0; i < sizeof(int); i++)
             {
                 p[i] = fgetc(fp);
             }
@@ -103,7 +105,7 @@ std::string USys::getHostname()
     char buf[256];
  
     if (gethostname(buf, 256) == -1) {
-        throw GeneralException(strerror(errno));
+        throw GeneralException(str::strerror(errno).c_str());
     } else {
         return buf;
     }
@@ -140,6 +142,7 @@ std::vector<std::string> USys::getIPAddresses(const std::string& name)
             break;
         }
     }
+    freeaddrinfo(result);
     return addrs;
 }
 
@@ -191,10 +194,11 @@ bool USys::getHostnameByAddress(const IP& ip, std::string& out)
                         NULL,
                         0,
                         NI_NAMEREQD)) {
-            LOG_ERROR("%s", gai_strerror(errcode));
+            LOG_TRACE("getnameinfo: %s (%s)", gai_strerror(errcode), ip.str().c_str());
             out = "";
             return false;
         } else {
+            LOG_TRACE("getnameinfo: %s (%s)", hbuf, ip.str().c_str());
             out = hbuf;
             return true;
         }
@@ -209,10 +213,11 @@ bool USys::getHostnameByAddress(const IP& ip, std::string& out)
                         NULL,
                         0,
                         NI_NAMEREQD)) {
-            LOG_ERROR("%s", gai_strerror(errcode));
+            LOG_TRACE("getnameinfo: %s (%s)", gai_strerror(errcode), ip.str().c_str());
             out = "";
             return false;
         } else {
+            LOG_TRACE("getnameinfo: %s (%s)", hbuf, ip.str().c_str());
             out = hbuf;
             return true;
         }
@@ -225,7 +230,7 @@ std::string USys::getExecutablePath()
     // readlink does not append a null byte to the buffer, so we zero it out beforehand.
     char path[PATH_MAX + 1] = "";
     if (readlink("/proc/self/exe", path, PATH_MAX) == -1) {
-        throw GeneralException(str::format("%s: %s", __func__, strerror(errno)).c_str());
+        throw GeneralException(str::format("%s: %s", __func__, str::strerror(errno).c_str()).c_str());
     }
     return path;
 }
@@ -236,7 +241,7 @@ std::string USys::dirname(const std::string& path)
     std::string normal;
 
     // 連続するスラッシュを１つにする。
-    for (int i = 0; i < path.size(); i++) {
+    for (size_t i = 0; i < path.size(); i++) {
         if (path[i] == '/') {
             if (path[i+1] != '/')
                 normal.push_back(path[i]);
@@ -268,7 +273,7 @@ std::string USys::joinPath(const std::vector<std::string>& vec)
 {
     std::string result;
 
-    for (int i = 0; i < vec.size(); i++) {
+    for (size_t i = 0; i < vec.size(); i++) {
         std::string frag = vec[i];
         if (frag.empty()) {
             // 空文字列の要素はスキップする。
@@ -362,7 +367,7 @@ void USys::openURL( const char* url )
 void USys::callLocalURL(const char *str, int port)
 {
     char cmd[512];
-    sprintf(cmd, "http://localhost:%d/%s", port, str);
+    snprintf(cmd, sizeof(cmd), "http://localhost:%d/%s", port, str);
     openURL( cmd );
 }
 
@@ -413,7 +418,7 @@ std::string USys::realPath(const std::string& path)
     char *p = realpath(path.c_str(), resolvedPath);
 
     if (!p)
-        throw GeneralException((std::string("realPath: ") + strerror(errno)).c_str());
+        throw GeneralException((std::string("realPath: ") + str::strerror(errno).c_str()).c_str());
     else
         return resolvedPath;
 }
@@ -422,6 +427,6 @@ std::string USys::realPath(const std::string& path)
 void USys::rename(const std::string& oldpath, const std::string& newpath)
 {
     if (::rename(oldpath.c_str(), newpath.c_str()) < 0) {
-        throw GeneralException( str::format("rename: %s", strerror(errno)).c_str() );
+        throw GeneralException( str::format("rename: %s", str::strerror(errno).c_str()).c_str() );
     }
 }

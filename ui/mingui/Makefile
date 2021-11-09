@@ -1,12 +1,12 @@
 # Uncomment following line to enabled RTMP fetch support
 WITH_RTMP = yes
 
-CPPFLAGS = -g -Wno-multichar -Wno-unused-variable -std=c++11 -U__STRICT_ANSI__ -DWIN32 -D_REENTRANT -D_UNICODE -DUNICODE $(INCLUDES)
+CPPFLAGS = -g -Wno-multichar -Wno-unused-variable -std=c++11 -U__STRICT_ANSI__ -DWIN32 -D_REENTRANT -D_UNICODE -DUNICODE $(INCLUDES) $(shell pkg-config openssl --cflags)
 ifeq ($(WITH_RTMP),yes)
   CPPFLAGS += -DWITH_RTMP $(shell pkg-config librtmp --cflags)
 endif
 LDFLAGS = 
-LIBS = -lwinpthread -lws2_32 -lShlwapi
+LIBS = -lwinpthread -lws2_32 -lShlwapi $(shell pkg-config openssl --libs)
 ifeq ($(WITH_RTMP),yes)
   LIBS += $(shell pkg-config librtmp --libs)
 endif
@@ -30,7 +30,7 @@ CGIBIN = ../cgi-bin/
 
 LIBOBJSTATIC = libpeercast.a
 
-DLLS=$(MSYSTEM_PREFIX)/bin/lib{winpthread-*,gcc_s_*-*,stdc++-*,rtmp-*,gmp-*,hogweed-*,gnutls-*,nettle-*,p11-kit-*,idn2-*,tasn1-*,unistring-*,ffi-*,iconv-*,intl-*}.dll
+DLLS=$(MSYSTEM_PREFIX)/bin/lib{winpthread-*,gcc_s_*-*,stdc++-*,rtmp-*,gmp-*,hogweed-*,gnutls-*,nettle-*,p11-kit-*,idn2-*,tasn1-*,unistring-*,ffi-*,iconv-*,intl-*,crypto-*,ssl-*}.dll
 ifeq ($(MSYSTEM),MINGW64)
   DLLS += $(MSYSTEM_PREFIX)/bin/zlib1.dll
 endif
@@ -56,7 +56,8 @@ DEPENDFILE = .deps
 # Here follow the generic build rules.
 all: $(TARGET) $(LIBOBJSTATIC) $(DISTARCHIVE) $(RTMPSERVER)
 
-deps: $(DEPENDFILE)
+deps:
+	$(CXX) $(CPPFLAGS) -MM $(CORESOURCE) $(SYSSOURCE) $(WINSOURCE) $(RTMPSOURCE) > $(DEPENDFILE)
 
 resource.o: Simple.rc
 	windres Simple.rc resource.o
@@ -95,9 +96,6 @@ $(SYSOBJ): %.o : $(CORE)/win32/%.cpp
 
 $(RTMPOBJ): %.o : $(RTMP)/%.cpp
 	$(CXX) $(CPPFLAGS) -c $< -o $@
-
-$(DEPENDFILE): $(CORESOURCE) $(SYSSOURCE) $(WINSOURCE) $(RTMPSOURCE)
-	$(CXX) $(CPPFLAGS) -MM $(CORESOURCE) $(SYSSOURCE) $(WINSOURCE) $(RTMPSOURCE) > $(DEPENDFILE)
 
 $(LIBOBJSTATIC): $(COREOBJ) $(SYSOBJ)
 	$(AR) rcs $(LIBOBJSTATIC) $(COREOBJ) $(SYSOBJ)
