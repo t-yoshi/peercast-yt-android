@@ -50,8 +50,10 @@ ServMgr::ServMgr()
             {"sendPortAtomWhenFirewallUnknown", "古いPeerCastStation相手に正常にポートチェックするにはオフにする。", false },
             {"forceFirewalled", "ファイアーウォール オンであるかの様に振る舞う。", false},
             {"startPlayingFromKeyFrame", "DIRECT接続でキーフレームまで継続パケットをスキップする。", true},
+            {"banTrackersWhileBroadcasting", "配信中他の配信者による視聴をBANする。", false},
         })
     , preferredTheme("system")
+    , accentColor("blue")
 {
     authType = AUTH_COOKIE;
 
@@ -138,7 +140,6 @@ ServMgr::ServMgr()
     channelDirectory->addFeed("http://yp.pcgw.pgw.jp/index.txt");
 
     uptestServiceRegistry->addURL("http://bayonet.ddo.jp/sp/yp4g.xml");
-    uptestServiceRegistry->addURL("http://temp.orz.hm/yp/yp4g.xml");
 
     chat = true;
 }
@@ -245,14 +246,6 @@ void ServMgr::ensureCatchallFilters()
         filters[numFilters].flags = ServFilter::F_NETWORK|ServFilter::F_DIRECT;
         numFilters++;
     }
-}
-
-// -----------------------------------
-void    ServMgr::setPassiveSearch(unsigned int t)
-{
-//  if ((t > 0) && (t < 60))
-//      t = 60;
-//  passiveSearch = t;
 }
 
 // -----------------------------------
@@ -863,8 +856,29 @@ void ServMgr::checkFirewallIPv6()
 }
 
 // -----------------------------------
+bool ServMgr::isBlacklisted(const Host& h)
+{
+    if (flags.get("banTrackersWhileBroadcasting") && chanMgr->isBroadcasting())
+    {
+        for (auto& entry : channelDirectory->channels())
+        {
+            auto tracker = Host::fromString(entry.tip);
+            if (tracker.ip && (tracker.ip == h.ip))
+            {
+                LOG_INFO("%s(%s) is being blocked", h.ip.str().c_str(), entry.name.c_str());
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// -----------------------------------
 bool ServMgr::isFiltered(int fl, Host &h)
 {
+    if ((fl & ServFilter::F_BAN) && isBlacklisted(h))
+        return true;
+
     for (int i=0; i<numFilters; i++)
         if (filters[i].matches(fl, h))
             return true;
@@ -908,7 +922,7 @@ static ini::Section writeRelayChannel(std::shared_ptr<Channel> c)
     keys.emplace_back("stayConnected", c->stayConnected);
 
     // トラッカーIPの書き出し。
-    ChanHitList *chl = chanMgr->findHitListByID(c->info.id);
+    auto chl = chanMgr->findHitListByID(c->info.id);
     if (chl)
     {
         ChanHitSearch chs;
@@ -1024,6 +1038,7 @@ ini::Document ServMgr::getSettings()
             {"audioCodec", this->audioCodec},
             {"wmvProtocol", this->wmvProtocol},
             {"preferredTheme", this->preferredTheme},
+            {"accentColor", this->accentColor},
         }
     });
 
@@ -1325,6 +1340,8 @@ void ServMgr::loadSettings(const char *fn)
                 this->wmvProtocol = iniFile.getStrValue();
             else if (iniFile.isName("preferredTheme"))
                 this->preferredTheme = iniFile.getStrValue();
+            else if (iniFile.isName("accentColor"))
+                this->accentColor = iniFile.getStrValue();
 
             // debug
             else if (iniFile.isName("logLevel"))
@@ -2137,6 +2154,7 @@ amf0::Value ServMgr::getState()
                                       }()},
             {"configurationFile", peercastApp->getIniFilename()},
             {"preferredTheme", this->preferredTheme},
+            {"accentColor", this->accentColor},
         });
 }
 

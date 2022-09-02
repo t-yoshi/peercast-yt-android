@@ -6,16 +6,6 @@
 #include "md5.h"
 
 // -----------------------------------
-void ChanMgr::startSearch(ChanInfo &info)
-{
-    searchInfo = info;
-    clearHitLists();
-    numFinds = 0;
-    lastHit = 0;
-    searchActive = true;
-}
-
-// -----------------------------------
 void ChanMgr::quit()
 {
     LOG_DEBUG("ChanMgr is quitting..");
@@ -282,8 +272,6 @@ std::shared_ptr<Channel> ChanMgr::findAndRelay(ChanInfo &info)
 
 // -----------------------------------
 ChanMgr::ChanMgr()
-    : lastHit(0)
-    , searchActive(false)
 {
     channel = NULL;
 
@@ -301,8 +289,6 @@ ChanMgr::ChanMgr()
     icyIndex = 0;
     icyMetaInterval = 8192;
     maxRelaysPerChannel = 0;
-
-    searchInfo.init();
 
     minBroadcastTTL = 1;
     maxBroadcastTTL = 7;
@@ -409,9 +395,7 @@ void ChanMgr::clearHitLists()
     {
         peercastApp->delChannel(&hitlist->info);
 
-        ChanHitList *next = hitlist->next;
-
-        delete hitlist;
+        auto next = hitlist->next;
 
         hitlist = next;
     }
@@ -468,7 +452,7 @@ std::shared_ptr<Channel> ChanMgr::createChannel(ChanInfo &info, const char *moun
 // -----------------------------------
 int ChanMgr::pickHits(ChanHitSearch &chs)
 {
-    ChanHitList *chl = hitlist;
+    auto chl = hitlist;
     while (chl)
     {
         if (chl->isUsed())
@@ -482,9 +466,9 @@ int ChanMgr::pickHits(ChanHitSearch &chs)
 }
 
 // -----------------------------------
-ChanHitList *ChanMgr::findHitList(ChanInfo &info)
+std::shared_ptr<ChanHitList> ChanMgr::findHitList(ChanInfo &info)
 {
-    ChanHitList *chl = hitlist;
+    auto chl = hitlist;
     while (chl)
     {
         std::lock_guard<std::recursive_mutex> lock(chl->lock);
@@ -498,9 +482,9 @@ ChanHitList *ChanMgr::findHitList(ChanInfo &info)
 }
 
 // -----------------------------------
-ChanHitList *ChanMgr::findHitListByID(const GnuID &id)
+std::shared_ptr<ChanHitList> ChanMgr::findHitListByID(const GnuID &id)
 {
-    ChanHitList *chl = hitlist;
+    auto chl = hitlist;
     while (chl)
     {
         std::lock_guard<std::recursive_mutex> lock(chl->lock);
@@ -516,7 +500,7 @@ ChanHitList *ChanMgr::findHitListByID(const GnuID &id)
 int ChanMgr::numHitLists()
 {
     int num = 0;
-    ChanHitList *chl = hitlist;
+    auto chl = hitlist;
     while (chl)
     {
         if (chl->isUsed())
@@ -527,9 +511,9 @@ int ChanMgr::numHitLists()
 }
 
 // -----------------------------------
-ChanHitList *ChanMgr::addHitList(ChanInfo &info)
+std::shared_ptr<ChanHitList> ChanMgr::addHitList(ChanInfo &info)
 {
-    ChanHitList *chl = new ChanHitList();
+    auto chl = std::make_shared<ChanHitList>();
 
     chl->next = hitlist;
     hitlist = chl;
@@ -548,7 +532,7 @@ void ChanMgr::clearDeadHits(bool clearTrackers)
     std::lock_guard<std::recursive_mutex> cs(lock);
     constexpr unsigned int interval = 180;
 
-    ChanHitList *chl = hitlist, *prev = NULL;
+    std::shared_ptr<ChanHitList> chl = hitlist, prev = nullptr;
     while (chl)
     {
         if (chl->isUsed())
@@ -561,13 +545,12 @@ void ChanMgr::clearDeadHits(bool clearTrackers)
                     {
                         peercastApp->delChannel(&chl->info);
 
-                        ChanHitList *next = chl->next;
+                        auto next = chl->next;
                         if (prev)
                             prev->next = next;
                         else
                             hitlist = next;
 
-                        delete chl;
                         chl = next;
                         continue;
                     }
@@ -625,7 +608,7 @@ int ChanMgr::numChannels()
 // -----------------------------------
 void ChanMgr::deadHit(ChanHit &hit)
 {
-    ChanHitList *chl = findHitListByID(hit.chanID);
+    auto chl = findHitListByID(hit.chanID);
     if (chl)
         chl->deadHit(hit);
 }
@@ -633,7 +616,7 @@ void ChanMgr::deadHit(ChanHit &hit)
 // -----------------------------------
 void ChanMgr::delHit(ChanHit &hit)
 {
-    ChanHitList *chl = findHitListByID(hit.chanID);
+    auto chl = findHitListByID(hit.chanID);
     if (chl)
         chl->delHit(hit);
 }
@@ -653,16 +636,11 @@ void ChanMgr::addHit(Host &h, const GnuID &id, bool tracker)
 }
 
 // -----------------------------------
-ChanHit *ChanMgr::addHit(ChanHit &h)
+std::shared_ptr<ChanHit> ChanMgr::addHit(ChanHit &h)
 {
     std::lock_guard<std::recursive_mutex> cs(lock);
 
-    if (searchActive)
-        lastHit = sys->getTime();
-
-    ChanHitList *hl = NULL;
-
-    hl = findHitListByID(h.chanID);
+    auto hl = findHitListByID(h.chanID);
 
     if (!hl)
     {

@@ -1174,6 +1174,8 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
             servMgr->wmvProtocol = arg;
         else if (strcmp(curr, "preferredTheme") == 0)
             servMgr->preferredTheme = arg;
+        else if (strcmp(curr, "accentColor") == 0)
+            servMgr->accentColor = arg;
     }
 
     servMgr->allowServer1 = allowServer1;
@@ -1394,7 +1396,7 @@ void Servent::CMD_bump(const char* cmd, HTTP& http, String& jumpStr)
     {
         if (!ip.empty())
         {
-            ChanHitList* chl = chanMgr->findHitList(c->info);
+            auto chl = chanMgr->findHitList(c->info);
             ChanHit theHit;
 
             if (chl)
@@ -1549,7 +1551,7 @@ void Servent::CMD_update_channel_info(const char* cmd, HTTP& http, String& jumpS
     jumpStr.sprintf("/%s/channels.html", servMgr->htmlPath);
 }
 
-static std::string dumpHit(ChanHit* hit)
+static std::string dumpHit(std::shared_ptr<ChanHit> hit)
 {
     using namespace str;
 
@@ -1657,7 +1659,7 @@ static std::string dumpChanInfo(const ChanInfo& info)
     return "ChanInfo\n" + indent_tab(b);
 }
 
-static std::string dumpHitList(ChanHitList* hitlist)
+static std::string dumpHitList(std::shared_ptr<ChanHitList> hitlist)
 {
     using namespace str;
 
@@ -1966,7 +1968,7 @@ static XML::Node *createChannelXML(std::shared_ptr<Channel> c)
 }
 
 // -----------------------------------
-static XML::Node *createChannelXML(ChanHitList *chl)
+static XML::Node *createChannelXML(std::shared_ptr<ChanHitList> chl)
 {
     XML::Node *n = chl->info.createChannelXML();
     n->add(chl->createXML());
@@ -2008,7 +2010,7 @@ void Servent::handshakeXML()
         XML::Node *fn = new XML::Node("channels_found total=\"%d\"", chanMgr->numHitLists());
         rn->add(fn);
 
-        ChanHitList *chl = chanMgr->hitlist;
+        auto chl = chanMgr->hitlist;
         while (chl)
         {
             if (chl->isUsed())
@@ -2431,7 +2433,7 @@ void Servent::handshakeLocalFile(const char *fn, HTTP& http)
                 throw HTTPException(HTTP_SC_NOTFOUND, 404);
 
             locals.vars["channel"] = ch->getState();
-        }else if (str::contains(fn, "/relayinfo.html"))
+        }else if (str::contains(fn, "/relayinfo.html") || str::contains(fn, "/head.html"))
         {
             auto vec = str::split(fn, "?");
             if (vec.size() != 2)
@@ -2444,6 +2446,19 @@ void Servent::handshakeLocalFile(const char *fn, HTTP& http)
 
             auto ch = chanMgr->findChannelByID(GnuID(id.c_str()));
             locals.vars["channel"] = ch ? ch->getState() : nullptr;
+        }else if (str::contains(fn, "connections.html") || str::contains(fn, "editinfo.html"))
+        {
+            auto vec = str::split(fn, "?");
+            if (vec.size() == 2)
+            {
+                String id = cgi::Query(vec[1]).get("id").c_str();
+
+                if (!id.isEmpty())
+                {
+                    auto ch = chanMgr->findChannelByID(GnuID(id.c_str()));
+                    locals.vars["channel"] = ch ? ch->getState() : nullptr;
+                }
+            }
         }
 
         char *args = strstr(fileName.cstr(), "?");

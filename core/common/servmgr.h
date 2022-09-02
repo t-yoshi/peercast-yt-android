@@ -185,7 +185,6 @@ public:
     void            saveSettings(const char *);
     ini::Document   getSettings();
     void            loadSettings(const char *);
-    void            setPassiveSearch(unsigned int);
     int             findChannel(ChanInfo &);
     bool            getChannel(char *, ChanInfo &, bool);
     void            ensureCatchallFilters();
@@ -245,6 +244,7 @@ public:
     static const char* getFirewallStateString(FW_STATE);
 
     amf0::Value getState() override;
+    bool isBlacklisted(const Host& h);
 
     ThreadInfo          serverThread;
     ThreadInfo          idleThread;
@@ -332,6 +332,7 @@ public:
 
     FlagRegistory       flags;
     std::string         preferredTheme;
+    std::string         accentColor;
 };
 
 // ----------------------------------
