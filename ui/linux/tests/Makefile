@@ -80,6 +80,6 @@ OBJS = $(notdir $(SRC:.cpp=.o))
 
 $(OBJS): %.o : ../../../tests/%.cpp $(wildcard $(USER_DIR)/*.h) $(GTEST_HEADERS)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $<
-        
+
 test-all : $(OBJS) ../libpeercast.a gtest.a
 	$(CXX) $(LDFLAGS) $^ -o $@ $(LIBS)

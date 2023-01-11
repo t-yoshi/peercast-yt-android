@@ -1,12 +1,15 @@
+// -*- mode: js; js-indent-level: 4 -*-
+
 // メイン処理に開いてほしいコマンドを入れるキュー。
 // ['open', URL] スレッド、板を開く。
 // ['post', MESSAGE] 投稿。
 $queue = [];
 
 function renderPost(p, info) {
+    const title = [p.name, p.mail, p.date].join(' ')
     var buf = "";
     buf += "<div class='highlight' style='padding: 2px; font-size: 13px'>";
-    buf += `<a target='_blank' href='${threadUrl(info)}/${p.no}'><b>${p.no}</b></a>：${p.body}`;
+    buf += `<a target='_blank' title='${title}' href='${threadUrl(info)}/${p.no}'><b>${p.no}</b></a>：${p.body}`;
     buf += "</div>"
     return buf;
 }
@@ -171,6 +174,7 @@ async function mainAsync(url) {
             board = await $.getJSON(boardCgi(info));
         } catch {
             $('#bbs-view').text("エラー: /cgi-bin/board.cgiの実行に失敗しました。");
+            return;
         }
         console.log(board);
 
@@ -212,10 +216,25 @@ async function mainAsync(url) {
             await delay(100);
         }
     } else if (info = getThreadInfo(url)) {
+        $('.post-form').hide();
+
+        let board;
+        let thread;
+        try {
+            board = await $.getJSON(`/cgi-bin/board.cgi?fqdn=${info.fqdn}&category=${info.category}&board_num=${info.board_num}`);
+        } catch {
+            $('#bbs-view').text("エラー: /cgi-bin/board.cgiの実行に失敗しました。");
+            return;
+        }
+        try {
+            thread = await $.getJSON(threadCgi(info, info.thread_id));
+        } catch {
+            $('#bbs-view').text("エラー: /cgi-bin/thread.cgiの実行に失敗しました。");
+            return;
+        }
+
         $('.post-form').show();
 
-        const board = await $.getJSON(`/cgi-bin/board.cgi?fqdn=${info.fqdn}&category=${info.category}&board_num=${info.board_num}`);
-        let thread = await $.getJSON(threadCgi(info, info.thread_id));
         console.log(thread);
         loadThread(info, thread, board.title);
         newPostsCallback(info, thread);

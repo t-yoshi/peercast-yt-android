@@ -24,7 +24,7 @@
 #include "channel.h"
 #include "servent.h"
 #include "servmgr.h"
-#include "win32/wsys.h"
+#include "wsys.h"
 #include "peercast.h"
 #include "simple.h"
 #include "version2.h"
@@ -812,12 +812,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             break;
         case ID_FIND_CHANNELS:
         case ID_POPUP_ADVANCED_ALLCHANNELS:
+            showHTML("channels.html");
+            break;
         case ID_POPUP_UPGRADE:
             sys->callLocalURL("admin?cmd=upgrade", servMgr->serverHost.port);
             break;
         case ID_POPUP_ADVANCED_RELAYEDCHANNELS:
         case ID_POPUP_FAVORITES_EDIT:
-            showHTML("channels.html");
+            showHTML("relays.html");
             break;
         case ID_POPUP_ADVANCED_BROADCAST:
             showHTML("broadcast.html");

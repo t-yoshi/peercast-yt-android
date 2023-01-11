@@ -48,7 +48,6 @@ bool    CookieList::add(Cookie &c)
         return false;
 
     list.push_back(c);
-    LOG_DEBUG("Added cookie: %s - %s", c.ip.str().c_str(), c.id);
     while (list.size() > MAX_COOKIES)
         list.pop_front();
     
@@ -86,4 +85,16 @@ void Cookie::clear()
 Cookie::Cookie()
 {
     clear();
+}
+
+// -----------------------------------
+amf0::Value CookieList::getState()
+{
+    std::vector<amf0::Value> arr;
+
+    for (auto& cookie : list)
+    {
+        arr.push_back(amf0::Value::object({ { "ip", cookie.ip.str() }, { "id", cookie.id } }));
+    }
+    return arr;
 }
