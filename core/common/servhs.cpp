@@ -2468,14 +2468,14 @@ void Servent::handshakeLocalFile(const char *fn, HTTP& http)
     try {
         documentRoot = sys->realPath(peercastApp->getPath()) + sys->getDirectorySeparator();
     } catch (GeneralException &e) {
-        LOG_ERROR("documentRoot: %s (%s)", e.what(), peercastApp->getPath());
+        LOG_ERROR("documentRoot: %s (%s)", e.what(), sys->fromFilenameEncoding(peercastApp->getPath()).c_str());
         throw HTTPException(HTTP_SC_SERVERERROR, 500);
     }
 
     String fileName = documentRoot.c_str();
     fileName.append(fn);
 
-    LOG_TRACE("Writing HTML file: %s", fileName.cstr());
+    LOG_TRACE("Writing HTML file: %s", sys->fromFilenameEncoding(fileName.cstr()).c_str());
 
     WriteBufferedStream bufferedSock(sock.get());
     HTML html("", bufferedSock);
