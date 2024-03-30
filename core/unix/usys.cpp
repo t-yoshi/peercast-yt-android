@@ -99,7 +99,7 @@ void    USys::setThreadName(const char* name)
 // ---------------------------------
 std::string USys::getThreadName()
 {
-#ifdef _GNU_SOURCE
+#if _GNU_SOURCE && !__ANDROID__
     char buf[16];
     int err = pthread_getname_np(pthread_self(), buf, 16);
     if (err != 0) {
