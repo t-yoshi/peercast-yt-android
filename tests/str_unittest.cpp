@@ -352,6 +352,7 @@ TEST_F(strFixture, truncate_utf8)
 
     ASSERT_EQ(str::truncate_utf8("a", 0), "");
     ASSERT_EQ(str::truncate_utf8("a", 1), "a");
+    ASSERT_EQ(str::truncate_utf8("a", 2), "a");
 
     ASSERT_EQ(str::truncate_utf8("あ", 0), "");
     ASSERT_EQ(str::truncate_utf8("あ", 1), "");
@@ -374,6 +375,19 @@ TEST_F(strFixture, truncate_utf8)
     ASSERT_THROW(str::truncate_utf8("\x8A\xBF", 2), std::invalid_argument); // 漢
     ASSERT_THROW(str::truncate_utf8("\x83" "A", 2), std::invalid_argument); // ア; KATAKANA LETTER A
     ASSERT_THROW(str::truncate_utf8("\xB1", 1), std::invalid_argument);     // ｱ; HALFWIDTH KATAKANA LETTER A
+
+    ASSERT_EQ(truncate_utf8("Aあ", 0), "");
+    ASSERT_EQ(truncate_utf8("Aあ", 1), "A");
+    ASSERT_EQ(truncate_utf8("Aあ", 2), "A");
+    ASSERT_EQ(truncate_utf8("Aあ", 3), "A");
+    ASSERT_EQ(truncate_utf8("Aあ", 4), "Aあ");
+    ASSERT_EQ(truncate_utf8("Aあ", 5), "Aあ");
+
+    // Can handle NUL
+    ASSERT_EQ(truncate_utf8({0}, 0), std::string({}));
+    ASSERT_EQ(truncate_utf8({0}, 1), std::string({0}));
+    ASSERT_EQ(truncate_utf8({0}, 2), std::string({0}));
+    ASSERT_EQ(truncate_utf8({0}, 3), std::string({0}));
 }
 
 TEST_F(strFixture, json_inspect_invalidInput)
@@ -394,3 +408,60 @@ TEST_F(strFixture, json_inspect)
                "\"\\u0001\"" ); // ^A
 }
 
+TEST_F(strFixture, shellwords)
+{
+    typedef std::vector<std::string> string_vector;
+
+    ASSERT_EQ(str::shellwords(""), string_vector({}));
+
+    ASSERT_EQ(str::shellwords(" \t "), string_vector({}));
+
+    ASSERT_EQ(str::shellwords("\\ "), string_vector({" "}));
+
+    ASSERT_EQ(str::shellwords("\"\""), string_vector({""}));
+
+    ASSERT_EQ(str::shellwords("\"\"\"\"\"\""), string_vector({""}));
+
+    ASSERT_EQ(str::shellwords("\"\" \"\" \"\""), string_vector({"", "", ""}));
+
+    ASSERT_EQ(str::shellwords("a b"), string_vector({"a", "b"}));
+
+    ASSERT_EQ(str::shellwords(" a  b "), string_vector({"a", "b"}));
+
+    ASSERT_EQ(str::shellwords("\'a b\'"), string_vector({"a b"}));
+
+    ASSERT_EQ(str::shellwords("a\\ b"), string_vector({"a b"}));
+
+    ASSERT_ANY_THROW(str::shellwords("'a\\'b'"));
+
+    ASSERT_EQ(str::shellwords("'a''b'"), string_vector({"ab"}));
+
+    ASSERT_EQ(str::shellwords("a\'\'b"), string_vector({"ab"}));
+
+    // an unescaped single quote in double quotes
+    ASSERT_EQ(str::shellwords("\"\'\""), string_vector({"\'"}));
+
+    // an unescaped double quote in single quotes.
+    ASSERT_EQ(str::shellwords("\'\"\'"), string_vector({"\""}));
+
+    ASSERT_EQ(str::shellwords("こんにちは"), string_vector({"こんにちは"}));
+
+    ASSERT_EQ(str::shellwords("やま かわ"), string_vector({"やま", "かわ"}));
+
+    ASSERT_EQ(str::shellwords("\"やま\" \"かわ\""), string_vector({"やま", "かわ"}));
+    ASSERT_EQ(str::shellwords("\"やま かわ\""), string_vector({"やま かわ"}));
+
+    ASSERT_EQ(str::shellwords("\\a"), string_vector({"a"}));
+    ASSERT_EQ(str::shellwords("\"\\a\""), string_vector({"\\a"}));
+    ASSERT_EQ(str::shellwords("\'\\a\'"), string_vector({"\\a"}));
+
+    ASSERT_ANY_THROW(str::shellwords("\'\\\'\'"));
+    ASSERT_EQ(str::shellwords("\'\\\"\'"), string_vector({"\\\""}));
+
+    ASSERT_EQ(str::shellwords("\"\\\"\""), string_vector({"\""}));
+    ASSERT_EQ(str::shellwords("\"\\\'\""), string_vector({"\\\'"}));
+
+    ASSERT_EQ(str::shellwords("\"\\\\\""), string_vector({"\\"}));
+    ASSERT_EQ(str::shellwords("\'\\\\\'"), string_vector({"\\\\"}));
+    ASSERT_EQ(str::shellwords("\\\\"), string_vector({"\\"}));
+}

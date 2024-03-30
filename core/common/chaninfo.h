@@ -19,6 +19,8 @@
 // GNU General Public License for more details.
 // ------------------------------------------------
 
+#include <string>
+
 #include "gnuid.h"
 #include "sys.h"
 #include "xml.h"
@@ -84,7 +86,8 @@ public:
         SP_MMS,
         SP_PCP,
         SP_WMHTTP,
-        SP_RTMP
+        SP_RTMP,
+        SP_PIPE,
     };
 
     enum STATUS
@@ -98,15 +101,9 @@ public:
     void    init();
     void    init(const char *);
     void    init(const char *, GnuID &, TYPE, int);
-    void    init(XML::Node *);
     void    initNameID(const char *);
 
-    void    updateFromXML(XML::Node *);
-
-    void        readTrackXML(XML::Node *);
-    void        readServentXML(XML::Node *);
     bool        update(const ChanInfo &);
-    XML::Node   *createQueryXML();
     XML::Node   *createChannelXML();
     XML::Node   *createRelayChannelXML();
     XML::Node   *createTrackXML();

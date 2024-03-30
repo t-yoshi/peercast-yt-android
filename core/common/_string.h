@@ -35,7 +35,6 @@ public:
     {
         T_UNKNOWN,
         T_ASCII,
-        T_HTML,
         T_ESC,
         T_ESCSAFE,
         T_META,
@@ -73,11 +72,8 @@ public:
     void clear();
 
     void ASCII2ESC(const char *, bool);
-    void ASCII2HTML(const char *);
     void ASCII2META(const char *, bool);
     void ESC2ASCII(const char *);
-    void HTML2ASCII(const char *);
-    void HTML2UNICODE(const char *);
     void BASE642ASCII(const char *);
     void UNKNOWN2UNICODE(const char *, bool);
 
@@ -87,8 +83,8 @@ public:
     bool isEmpty() const { return data[0]==0; }
     bool isSame(::String &s) const { return strcmp(data, s.data)==0; }
     bool isSame(const char *s) const { return strcmp(data, s)==0; }
-    bool contains(const ::String &s) const { return stristr(data, s.data)!=NULL; }
-    bool contains(const char *s) const { return stristr(data, s)!=NULL; }
+    bool contains(const ::String &s) const { return stristr(data, s.data)!=nullptr; }
+    bool contains(const char *s) const { return stristr(data, s)!=nullptr; }
     void append(const char *s);
     void append(char c);
     void prepend(const char *s);

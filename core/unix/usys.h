@@ -39,7 +39,9 @@ public:
     bool            hasGUI() override;
     void            callLocalURL(const char *, int) override;
     void            executeFile(const char *) override;
+
     void            setThreadName(const char* name) override;
+    std::string     getThreadName() override;
 
     std::string     getHostname() override;
     std::vector<std::string> getIPAddresses(const std::string& name) override;
@@ -54,12 +56,12 @@ public:
 
     void rename(const std::string& oldpath, const std::string& newpath) override;
 
+    std::string getCurrentWorkingDirectory() override;
+
     peercast::Random rndGen;
 private:
 
-#ifdef __APPLE__
     void openURL( const char* url );
-#endif
 };
 
 // ------------------------------------

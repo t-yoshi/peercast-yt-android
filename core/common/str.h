@@ -1,8 +1,9 @@
 #ifndef _STR_H
 #define _STR_H
 
+#include <stdint.h>
 #include <string>
-#include <sstream> // to implement str
+#include <sstream> // to implement str::STR
 #include <vector>
 #include <stdarg.h>
 
@@ -39,6 +40,8 @@ namespace str
     std::string strip(const std::string&);
     std::string escapeshellarg_unix(const std::string& str);
 
+    std::vector<std::string> shellwords(const std::string& str);
+
     std::vector<std::string> to_lines(const std::string& text);
     std::string indent_tab(const std::string& text, int n = 1);
 
@@ -59,7 +62,13 @@ namespace str
     }
 
     bool validate_utf8(const std::string& str);
+    // Truncate the UTF-8 string str to the maximum size of length bytes.
     std::string truncate_utf8(const std::string& str, size_t length);
+
+    // If str is a valid UTF-8 string, return a copy of it. Otherwise,
+    // escape non-ASCII bytes in hexadecimal notation surrounded by
+    // brackets ([XX]).
+    std::string valid_utf8(const std::string& str);
 }
 
 #endif

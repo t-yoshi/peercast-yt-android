@@ -31,7 +31,7 @@ public:
     static void init();
 
     WSAClientSocket()
-    :sockNum(0)
+    :sockNum(INVALID_SOCKET)
     {
     }
 
@@ -48,17 +48,21 @@ public:
     void    connect() override;
     void    close() override;
     std::shared_ptr<ClientSocket> accept() override;
-    bool    active() override { return sockNum != 0; }
+    bool    active() override { return sockNum != INVALID_SOCKET; }
     bool    readReady(int timeoutMilliseconds) override;
     Host    getLocalHost() override;
     void    setBlocking(bool) override;
-    void    setReuse(bool);
-    void    setNagle(bool);
-    void    setLinger(int);
+    void    setReuse(bool) override;
+    void    setNagle(bool) override;
+    void    setLinger(int) override;
 
     static  HOSTENT     *resolveHost(const char *);
 
     void    checkTimeout(bool,bool);
+
+    int getDescriptor() const override { return sockNum; }
+    void detach() override { sockNum = INVALID_SOCKET; remoteAddr = {}; }
+    char peekChar() override;
 
     SOCKET sockNum;
     struct sockaddr_in6 remoteAddr;

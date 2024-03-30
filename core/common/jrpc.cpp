@@ -7,6 +7,7 @@
 
 using namespace std;
 using json = nlohmann::json;
+using str::valid_utf8;
 
 static json error_object(int code, const char* message, json id = nullptr, json data = nullptr)
 {
@@ -66,6 +67,14 @@ json JrpcApi::call_internal(const string& input)
 
     try {
         result = dispatch(method, params);
+
+        result.dump(); // Check if it can properly be serialized (!).
+
+        return {
+            { "jsonrpc", "2.0" },
+            { "result", result },
+            { "id", id }
+        };
     } catch (method_not_found& e)
     {
         LOG_DEBUG("Method not found: %s", e.what());
@@ -81,12 +90,6 @@ json JrpcApi::call_internal(const string& input)
         // Unexpected errors are handled here.
         return error_object(kInternalError, e.what(), id);
     }
-
-    return {
-        { "jsonrpc", "2.0" },
-        { "result", result },
-        { "id", id }
-    };
 }
 
 json JrpcApi::getLog(json::array_t args)
@@ -224,26 +227,18 @@ json JrpcApi::fetch(json::array_t params)
             network = params[7];
 
         ChanInfo info;
-        info.name    = name.c_str();
-        info.desc    = desc.c_str();
-        info.genre   = genre.c_str();
-        info.url     = contact.c_str();
+        info.name    = str::truncate_utf8(str::valid_utf8(name), 255);
+        info.desc    = str::truncate_utf8(str::valid_utf8(desc), 255);
+        info.genre   = str::truncate_utf8(str::valid_utf8(genre), 255);
+        info.url     = str::truncate_utf8(str::valid_utf8(contact), 255);
         info.bitrate = bitrate;
-        {
-            auto type = ChanInfo::getTypeFromStr(typeStr.c_str());
-
-            info.contentType    = type;
-            info.MIMEType       = ChanInfo::getMIMEType(type);
-            info.streamExt      = ChanInfo::getTypeExt(type);
-        }
-        info.bcID = chanMgr->broadcastID;
+        info.setContentType(typeStr.c_str());
 
         // ソースに接続できなかった場合もチャンネルを同定したいの
         // で、事前にチャンネルIDを設定する。
-        info.id = chanMgr->broadcastID;
-        info.id.encode(NULL, info.name, info.genre, info.bitrate);
+        Servent::setBroadcastIdChannelId(info, chanMgr->broadcastID);
 
-        auto c = chanMgr->createChannel(info, NULL); // info, mount
+        auto c = chanMgr->createChannel(info);
         if (!c)
         {
             throw application_error(kUnknownError, "failed to create channel");
@@ -280,15 +275,12 @@ json JrpcApi::to_json(GnuID id)
 
 json JrpcApi::to_json(ChanInfo& info)
 {
-    String comment = info.comment;
-    comment.convertTo(String::T_UNICODE);  // should not be needed
-
     return {
-        {"name", info.name.cstr()},
-        {"url", info.url.cstr()},
-        {"genre", info.genre.cstr()},
-        {"desc", info.desc.cstr()},
-        {"comment", comment.cstr()},
+        {"name", valid_utf8(info.name)},
+        {"url", valid_utf8(info.url)},
+        {"genre", valid_utf8(info.genre)},
+        {"desc", valid_utf8(info.desc)},
+        {"comment", valid_utf8(info.comment)},
         {"bitrate", info.bitrate},
         {"contentType", info.getTypeStr()}, //?
         {"mimeType", info.getMIMEType()}
@@ -298,11 +290,11 @@ json JrpcApi::to_json(ChanInfo& info)
 json JrpcApi::to_json(TrackInfo& track)
 {
     return {
-        {"name", track.title.cstr()},
-        {"genre", track.genre.cstr()},
-        {"album", track.album.cstr()},
-        {"creator", track.artist.cstr()},
-        {"url", track.contact.cstr()}
+        {"name", valid_utf8(track.title)},
+        {"genre", valid_utf8(track.genre)},
+        {"album", valid_utf8(track.album)},
+        {"creator", valid_utf8(track.artist)},
+        {"url", valid_utf8(track.contact)}
     };
 }
 
@@ -397,7 +389,7 @@ json JrpcApi::stopChannelConnection(json::array_t params)
     bool success = false;
 
     std::lock_guard<std::recursive_mutex> cs(servMgr->lock);
-    for (Servent* s = servMgr->servents; s != NULL; s = s->next)
+    for (Servent* s = servMgr->servents; s != nullptr; s = s->next)
     {
          if (s->serventIndex == connectionId &&
              s->chanID.isSame(id) &&
@@ -480,7 +472,7 @@ json JrpcApi::getChannelConnections(json::array_t params)
     result.push_back(toSourceConnection(c));
 
     std::lock_guard<std::recursive_mutex> cs(servMgr->lock);
-    for (Servent* s = servMgr->servents; s != NULL; s = s->next)
+    for (Servent* s = servMgr->servents; s != nullptr; s = s->next)
     {
         if (!s->chanID.isSame(id))
             continue;
@@ -525,7 +517,7 @@ json JrpcApi::getChannels(json::array_t)
     json result = json::array();
 
     std::lock_guard<std::recursive_mutex> cs(chanMgr->lock);
-    for (auto c = chanMgr->channel; c != NULL; c = c->next)
+    for (auto c = chanMgr->channel; c != nullptr; c = c->next)
     {
         result.push_back(to_json(c));
     }
@@ -571,15 +563,15 @@ json JrpcApi::to_json(std::shared_ptr<ChanHitList> hitList)
 {
     ChanInfo info = hitList->info;
     return {
-        { "name", info.name.cstr() },
+        { "name", valid_utf8(info.name) },
         { "id",  (std::string) info.id },
         { "bitrate", info.bitrate },
         { "type", info.getTypeStr() },
-        { "genre", info.genre.cstr() },
-        { "desc", info.desc.cstr() },
-        { "url", info.url.cstr() },
+        { "genre", valid_utf8(info.genre) },
+        { "desc", valid_utf8(info.desc) },
+        { "url", info.url },
         { "uptime", info.getUptime() },
-        { "comment", info.comment.cstr() },
+        { "comment", valid_utf8(info.comment) },
         { "skips", info.numSkips },
         { "age", info.getAge() },
         { "bcflags", info.bcID.getFlags() },
@@ -628,7 +620,7 @@ json::array_t JrpcApi::announcingChannels()
     json::array_t result;
 
     std::lock_guard<std::recursive_mutex> cs(chanMgr->lock);
-    for (auto c = chanMgr->channel; c != NULL; c = c->next)
+    for (auto c = chanMgr->channel; c != nullptr; c = c->next)
     {
         if (!c->isBroadcasting())
             continue;
@@ -655,8 +647,8 @@ json JrpcApi::getYellowPages(json::array_t)
         j = {
             { "yellowPageId", 0 },
             { "name",  root },
-            { "uri", String::format("pcp://%s/", root).cstr() },
-            { "announceUri", String::format("pcp://%s/", root).cstr() },
+            { "uri", String::format("pcp://%s/", root) },
+            { "announceUri", String::format("pcp://%s/", root) },
             { "channelsUri", nullptr },
             { "protocol", "pcp" },
             { "channels", announcingChannels() }
@@ -729,7 +721,7 @@ json JrpcApi::getStatus(json::array_t)
 {
     std::string globalIP = servMgr->serverHost.IPtoStr();
     auto port            = servMgr->serverHost.port;
-    std::string localIP  = Host(sys->getInterfaceIPv4Address(), port).IPtoStr();
+    std::string localIP  = servMgr->serverLocalIP.str();
 
     json j = {
         { "uptime", servMgr->getUptime() },
@@ -745,6 +737,7 @@ json JrpcApi::getStatus(json::array_t)
 
 #include "stats.h"
 #include "notif.h"
+#include "yplist.h"
 
 json JrpcApi::getState(json::array_t args)
 {
@@ -763,6 +756,8 @@ json JrpcApi::getState(json::array_t args)
             json[name] = json::parse(g_notificationBuffer.getState().inspect());
         else if (name == "sys")
             json[name] = json::parse(sys->getState().inspect());
+        else if (name == "ypList")
+            json[name] = json::parse(g_ypList->getState().inspect());
         else
             throw invalid_params("Unknown object name: " + name);
     }
@@ -833,15 +828,34 @@ json JrpcApi::getChannelRelayTree(json::array_t args)
 {
     GnuID id = args[0].get<std::string>();
 
-    auto channel = chanMgr->findChannelByID(id);
-    if (!channel)
+    auto ch = chanMgr->findChannelByID(id);
+    if (!ch)
         throw application_error(kChannelNotFound, "Channel not found");
 
     auto hitList = chanMgr->findHitListByID(id);
     if (!hitList)
         throw application_error(kUnknownError, "Hit list not found");
 
-    HostGraph graph(channel, hitList.get(), channel->ipVersion);
+    ChanHit self;
+    Host uphost;
+    bool isTracker = ch->isBroadcasting();
+
+    if (!isTracker)
+        uphost = ch->sourceHost.host;
+
+    self.initLocal(ch->localListeners(),
+                   ch->localRelays(),
+                   ch->info.numSkips,
+                   ch->info.getUptime(),
+                   ch->isPlaying(),
+                   ch->rawData.getOldestPos(),
+                   ch->rawData.getLatestPos(),
+                   ch->canAddRelay(),
+                   uphost,
+                   (ch->ipVersion == 6));
+    self.tracker = isTracker;
+
+    HostGraph graph(self, hitList.get());
 
     return graph.getRelayTree();
 }
@@ -858,6 +872,17 @@ json JrpcApi::bumpChannel(json::array_t args)
         throw application_error(kChannelNotFound, "Channel not found");
 
     channel->bump = true;
+
+    return nullptr;
+}
+
+json JrpcApi::playChannel(json::array_t args)
+{
+    std::string id = args[0].get<std::string>();
+
+    ChanInfo info;
+    info.id.fromStr(id.c_str());
+    chanMgr->findAndPlayChannel(info, /*keep=*/ false);
 
     return nullptr;
 }

@@ -27,6 +27,7 @@
 #include "socket.h"
 #include "defer.h"
 #include <chrono>
+#include <sstream>
 
 // ------------------------------------------
 Sys::Sys()
@@ -54,17 +55,11 @@ void Sys::sleepIdle()
 }
 
 // -----------------------------------
-#include "sstream.h"
 amf0::Value Sys::getState()
 {
-    StringStream s;
-    logBuf->dumpHTML(s);
     return amf0::Value::object(
         {
-            { "log", amf0::Value::object(
-                    {
-                        {"dumpHTML", s.str()}
-                    })},
+            { "log", sys->logBuf->getState() },
             { "time", sys->getTime() },
         });
 }
@@ -116,19 +111,19 @@ char *stristr(const char *s1, const char *s2)
 
         s1++;
     }
-    return NULL;
+    return nullptr;
 }
 
 // -----------------------------------
 const char *getCGIarg(const char *str, const char *arg)
 {
     if (!str)
-        return NULL;
+        return nullptr;
 
     const char *s = strstr(str, arg);
 
     if (!s)
-        return NULL;
+        return nullptr;
 
     s += strlen(arg);
 
@@ -276,7 +271,7 @@ bool    Sys::startWaitableThread(ThreadInfo *info)
 // ---------------------------------
 unsigned int Sys::getTime()
 {
-    return time(NULL);
+    return time(nullptr);
 }
 
 // ---------------------------------
@@ -296,6 +291,15 @@ void Sys::waitThread(ThreadInfo* info)
     {
         LOG_WARN("waitThread called on non-joinable thread");
     }
+}
+
+// ---------------------------------
+std::string Sys::getThreadIdString()
+{
+    // return std::string(std::this_thread::get_id());
+    std::stringstream ss;
+    ss << std::this_thread::get_id();
+    return ss.str();
 }
 
 // ---------------------------------

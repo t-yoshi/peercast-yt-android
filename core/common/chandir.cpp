@@ -9,6 +9,7 @@
 #include "chandir.h"
 #include "uri.h"
 #include "servmgr.h"
+#include "regexp.h"
 
 using namespace std;
 
@@ -74,71 +75,29 @@ int ChannelDirectory::numFeeds() const
     return m_feeds.size();
 }
 
-#include "sslclientsocket.h"
 // index.txt を指す URL である url からチャンネルリストを読み込み、out
 // に格納する。成功した場合は true が返る。エラーが発生した場合は
 // false が返る。false を返した場合でも out に読み込めたチャンネル情報
 // が入っている場合がある。
-static bool getFeed(std::string url, std::vector<ChannelEntry>& out)
+static bool getFeed(const std::string& url, std::vector<ChannelEntry>& out)
 {
     out.clear();
 
-    URI feed(url);
-    if (!feed.isValid()) {
-        LOG_ERROR("invalid URL (%s)", url.c_str());
-        return false;
-    }
-    if (feed.scheme() != "http" && feed.scheme() != "https") {
-        LOG_ERROR("unsupported protocol (%s)", url.c_str());
-        return false;
-    }
-
-    Host host;
-    host.fromStrName(feed.host().c_str(), feed.port());
-    if (!host.ip) {
-        LOG_ERROR("Could not resolve %s", feed.host().c_str());
-        return false;
-    }
-
-    std::shared_ptr<ClientSocket> rsock;
-    if (feed.scheme() == "https") {
-        rsock = std::make_shared<SslClientSocket>();
-    } else {
-        rsock = sys->createSocket();
-    }
-
     try {
-        LOG_TRACE("Connecting to %s (%s) port %d ...", feed.host().c_str(), host.ip.str().c_str(), feed.port());
-        rsock->open(host);
-        rsock->connect();
-        LOG_TRACE("Connected to %s", host.str().c_str());
-
-        HTTP rhttp(*rsock);
-
-        HTTPRequest req("GET",
-                        feed.path() + "?host=" + cgi::escape(servMgr->serverHost),
-                        "HTTP/1.1",
-                        {
-                            { "Host", feed.host() },
-                            { "Connection", "close" },
-                            { "User-Agent", PCX_AGENT }
-                        });
-
-        HTTPResponse res = rhttp.send(req);
-        if (res.statusCode != 200) {
-            LOG_ERROR("%s: status code %d", feed.host().c_str(), res.statusCode);
-            return false;
-        }
+        const int serverPort = servMgr->serverHost.port;
+        cgi::Query query;
+        query.add("host", str::STR("localhost:", serverPort));
+        auto body = http::get(url + "?" + query.str());
 
         std::vector<std::string> errors;
-        out = ChannelEntry::textToChannelEntries(res.body, url, errors);
+        out = ChannelEntry::textToChannelEntries(body, url, errors);
 
         for (auto& message : errors) {
             LOG_ERROR("%s", message.c_str());
         }
 
         return errors.empty();
-    } catch (StreamException& e) {
+    } catch (GeneralException& e) {
         LOG_ERROR("%s", e.msg);
         return false;
     }
@@ -291,29 +250,15 @@ bool ChannelDirectory::writeChannelVariable(Stream& out, const String& varName, 
     return true;
 }
 
-bool ChannelDirectory::writeFeedVariable(Stream& out, const String& varName, int index)
+static std::string directoryUrlOf(const std::string& url)
 {
-    std::lock_guard<std::recursive_mutex> cs(m_lock);
-
-    if (!(index >= 0 && (size_t)index < m_feeds.size())) {
-        // empty string
-        return true;
-    }
-
-    string value;
-
-    if (varName == "url") {
-        value = m_feeds[index].url;
-    } else if (varName == "directoryUrl") {
-        value = str::replace_suffix(m_feeds[index].url, "index.txt", "");
-    } else if (varName == "status") {
-        value = ChannelFeed::statusToString(m_feeds[index].status);
+    auto matches = Regexp("/[^/]*$").exec(url);
+        
+    if (matches.size() > 0) {
+        return str::replace_suffix(url, matches[0], "/");
     } else {
-        return false;
+        return url;
     }
-
-    out.writeString(value.c_str());
-    return true;
 }
 
 static std::string formatTime(unsigned int diff)
@@ -367,7 +312,7 @@ amf0::Value ChannelDirectory::getState()
         feeds.push_back(amf0::Value::object(
                             {
                                 {"url", f.url},
-                                {"directoryUrl", str::replace_suffix(f.url, "index.txt", "")},
+                                {"directoryUrl", directoryUrlOf(f.url)},
                                 {"status", ChannelFeed::statusToString(f.status) },
                                 {"numChannels", count }
                             }));
@@ -449,6 +394,16 @@ std::string ChannelDirectory::findTracker(const GnuID& id) const
             return entry.tip;
     }
     return "";
+}
+
+std::shared_ptr<ChannelEntry> ChannelDirectory::findEntry(const GnuID& id) const
+{
+    for (const ChannelEntry& entry : m_channels)
+    {
+        if (entry.id.isSame(id))
+            return std::make_shared<ChannelEntry>(entry);
+    }
+    return nullptr;
 }
 
 std::string ChannelFeed::statusToString(ChannelFeed::Status s)

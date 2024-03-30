@@ -35,6 +35,7 @@
 #include "defer.h"
 #include "gnutella.h"
 #include "chanmgr.h"
+#include "regexp.h"
 
 const int DIRECT_WRITE_TIMEOUT = 60;
 
@@ -66,6 +67,7 @@ const char *Servent::typeMsgs[] =
     "DIRECT",
     "COUT",
     "CIN",
+    "COMMAND",
 };
 
 // -----------------------------------
@@ -99,7 +101,7 @@ bool    Servent::isFiltered(int f)
 // 更されない。
 bool Servent::canStream(std::shared_ptr<Channel> ch, Servent::StreamRequestDenialReason *reason)
 {
-    if (ch==NULL)
+    if (ch==nullptr)
     {
         *reason = StreamRequestDenialReason::Other;
         return false;
@@ -155,8 +157,8 @@ bool Servent::canStream(std::shared_ptr<Channel> ch, Servent::StreamRequestDenia
 // -----------------------------------
 Servent::Servent(int index)
     : serventIndex(index)
-    , sock(NULL)
-    , next(NULL)
+    , sock(nullptr)
+    , next(nullptr)
 {
     reset();
 }
@@ -178,7 +180,7 @@ void    Servent::kill()
     if (pcpStream)
     {
         PCPStream *pcp = pcpStream;
-        pcpStream = NULL;
+        pcpStream = nullptr;
         pcp->kill();
         delete pcp;
     }
@@ -186,13 +188,13 @@ void    Servent::kill()
     if (sock)
     {
         sock->close();
-        sock = NULL;
+        sock = nullptr;
     }
 
     if (pushSock)
     {
         pushSock->close();
-        pushSock = NULL;
+        pushSock = nullptr;
     }
 
     if (type != T_SERVER)
@@ -222,7 +224,7 @@ void Servent::reset()
 
     servPort = 0;
 
-    pcpStream = NULL;
+    pcpStream = nullptr;
 
     networkID.clear();
 
@@ -231,7 +233,7 @@ void Servent::reset()
     outputProtocol = ChanInfo::SP_UNKNOWN;
 
     agent.clear();
-    sock = NULL;
+    sock = nullptr;
     allow = ALLOW_ALL;
     syncPos = 0;
     addMetadata = false;
@@ -242,7 +244,7 @@ void Servent::reset()
     loginMount.clear();
 
     priorityConnect = false;
-    pushSock = NULL;
+    pushSock = nullptr;
     sendHeader = true;
 
     status = S_NONE;
@@ -262,7 +264,7 @@ bool Servent::sendPacket(ChanPacket &pack, const GnuID &cid, const GnuID &sid, c
             && (isConnected())
             && (!cid.isSet() || chanID.isSame(cid))
             && (!sid.isSet() || !sid.isSame(remoteID))
-            && (pcpStream != NULL)
+            && (pcpStream != nullptr)
         )
     {
         return pcpStream->sendPacket(pack, did);
@@ -489,7 +491,11 @@ bool    Servent::pingHost(Host &rhost, const GnuID &rsid)
 
             AtomStream atom(*s);
 
-            atom.writeInt(PCP_CONNECT, 1);
+            if (rhost.ip.isIPv4Mapped()) {
+                atom.writeInt(PCP_CONNECT, 1);
+            } else {
+                atom.writeInt(PCP_CONNECT, 100);
+            }
             atom.writeParent(PCP_HELO, 1);
                 atom.writeBytes(PCP_HELO_SESSIONID, servMgr->sessionID.id, 16);
 
@@ -906,6 +912,7 @@ bool Servent::handshakeStream(ChanInfo &chanInfo)
                     // ンネルをリレー・視聴している servent であると設
                     // 定する。
                     chanID = chanInfo.id;
+                    setStatus(S_CONNECTED);
                 }
             }
             LOG_DEBUG("chanReady = %d; reason = %s", chanReady, denialReasonToName(reason));
@@ -939,7 +946,7 @@ bool Servent::handshakeStream(ChanInfo &chanInfo)
 
                 // リレー自動管理。
                 std::lock_guard<std::recursive_mutex> cs(servMgr->lock);
-                for (Servent* s = servMgr->servents; s != NULL; s = s->next)
+                for (Servent* s = servMgr->servents; s != nullptr; s = s->next)
                 {
                     if (s == this) continue;
 
@@ -947,6 +954,7 @@ bool Servent::handshakeStream(ChanInfo &chanInfo)
 
                     if (s->type == Servent::T_RELAY &&
                         s->chanID.isSame(chanInfo.id) &&
+                        !s->isPrivate() &&
                         hit &&
                         Servent::isTerminationCandidate(hit.get()))
                     {
@@ -1024,7 +1032,7 @@ void Servent::writeHeloAtom(AtomStream &atom, bool sendPort, bool sendPing, bool
 }
 
 // -----------------------------------
-void Servent::handshakeOutgoingPCP(AtomStream &atom, Host &rhost, GnuID &rid, String &agent, bool isTrusted)
+void Servent::handshakeOutgoingPCP(AtomStream &atom, const Host &rhost, /*out*/ GnuID &rid, /*out*/ String &agent, bool isTrusted)
 {
     int ipv = rhost.ip.isIPv4Mapped() ? 4 : 6;
     if (servMgr->flags.get("sendPortAtomWhenFirewallUnknown"))
@@ -1137,6 +1145,83 @@ void Servent::handshakeOutgoingPCP(AtomStream &atom, Host &rhost, GnuID &rid, St
 }
 
 // -------------------------------------------------------------------
+Servent::SupportStatus Servent::continuationPacketSupportStatus(const std::string& agent)
+{
+    // PeerCastStation
+    {
+        static std::vector<int> minimumVersion({ 2, 8, 0 });
+        static Regexp reg("^PeerCastStation/([0-9.]+)$");
+        auto m = reg.exec(agent);
+
+        if (m.size() > 0)
+        {
+            auto strvec = str::split(m.at(1), ".");
+            std::vector<int> ver;
+            for (auto& str : strvec)
+                ver.push_back(std::atoi(str.c_str()));
+
+            if (ver >= minimumVersion)
+                return SupportStatus::Supported;
+            else
+                return SupportStatus::Unsupported;
+        }
+    }
+
+    // YT
+    {
+        static Regexp reg("^PeerCast/0.1218 \\(YT(\\d+)\\)$");
+        auto m = reg.exec(agent);
+        if (m.size() > 0)
+        {
+            if (std::atoi(m.at(1).c_str()) < 15)
+                return SupportStatus::Unsupported;
+            else
+                return SupportStatus::Supported;
+        }
+    }
+
+    // IM
+    {
+        static Regexp reg("^PeerCast/0.1218\\(IM(\\d+)\\)$"); // "PeerCast/0.1218(IM0051)" etc.
+
+        auto m = reg.exec(agent);
+        if (m.size() > 0)
+        {
+            if (std::atoi(m.at(1).c_str()) <= 51)
+                return SupportStatus::Unsupported;
+            else
+                return SupportStatus::Unknown;
+        }
+    }
+
+    // VP
+    {
+        static Regexp reg("^PeerCast/0.1218\\(VP(\\d+)\\)$"); // "PeerCast/0.1218(VP0027)" etc.
+
+        auto m = reg.exec(agent);
+        if (m.size() > 0)
+        {
+            if (std::atoi(m.at(1).c_str()) <= 27)
+                return SupportStatus::Unsupported;
+            else
+                return SupportStatus::Unknown;
+        }
+    }
+
+    // PP?
+    {
+        if (agent == "PeerCast/0.1218-J")
+            return SupportStatus::Unsupported;
+    }
+
+    // 無印(!)
+    if (agent == "PeerCast/0.1218")
+        return SupportStatus::Unsupported;
+
+    return SupportStatus::Unknown;
+}
+
+// -------------------------------------------------------------------
 // PCPハンドシェイク。HELO, OLEH。グローバルIP、ファイアウォールチェッ
 // ク。
 void Servent::handshakeIncomingPCP(AtomStream &atom, Host &rhost, GnuID &rid, String &agent)
@@ -1230,6 +1315,23 @@ void Servent::handshakeIncomingPCP(AtomStream &atom, Host &rhost, GnuID &rid, St
         }
     }
 
+    if (servMgr->flags.get("requireContinuationPacketSupportFromPeer"))
+    {
+        SupportStatus status = continuationPacketSupportStatus(agent);
+        if (status == SupportStatus::Unsupported)
+        {
+            LOG_DEBUG("requireContinuationPacketSupportFromPeer: Denied %s %s", agent.cstr(), rhost.str().c_str());
+            atom.writeInt(PCP_QUIT, PCP_ERROR_QUIT+PCP_ERROR_BADAGENT);
+            throw StreamException("Agent is not valid (continuation packets unsupported)");
+        }else if (status == SupportStatus::Unknown)
+        {
+            LOG_WARN("requireContinuationPacketSupportFromPeer: Allowing agent of unknown status %s", str::inspect(agent).c_str());
+        }else if (status == SupportStatus::Supported)
+        {
+            LOG_DEBUG("requireContinuationPacketSupportFromPeer: Allowed %s %s", agent.cstr(), rhost.str().c_str());
+        }
+    }
+
     if (!rid.isSet())
     {
         atom.writeInt(PCP_QUIT, PCP_ERROR_QUIT+PCP_ERROR_NOTIDENTIFIED);
@@ -1256,8 +1358,8 @@ void Servent::processIncomingPCP(bool suggestOthers)
 
     handshakeIncomingPCP(atom, rhost, remoteID, agent);
 
-    bool alreadyConnected = (servMgr->findConnection(Servent::T_COUT, remoteID)!=NULL) ||
-                            (servMgr->findConnection(Servent::T_CIN,  remoteID)!=NULL);
+    bool alreadyConnected = (servMgr->findConnection(Servent::T_COUT, remoteID)!=nullptr) ||
+                            (servMgr->findConnection(Servent::T_CIN,  remoteID)!=nullptr);
     bool unavailable      = servMgr->controlInFull();
     bool offair           = !servMgr->isRoot && !chanMgr->isBroadcasting();
 
@@ -1428,7 +1530,7 @@ int Servent::outgoingProc(ThreadInfo *thread)
                 if (sv->pushSock)
                 {
                     sv->sock = sv->pushSock;
-                    sv->pushSock = NULL;
+                    sv->pushSock = nullptr;
                     bestHit.host = sv->sock->host;
                     break;
                 }
@@ -1547,7 +1649,7 @@ int Servent::outgoingProc(ThreadInfo *thread)
                 if (sv->sock)
                 {
                     sv->sock->close();
-                    sv->sock = NULL;
+                    sv->sock = nullptr;
                 }
             }catch (StreamException &) {}
 
@@ -1610,6 +1712,7 @@ void Servent::processStream(ChanInfo &chanInfo)
         return;
 
     ASSERT(chanID.isSet());
+    ASSERT(this->status == S_CONNECTED);
 
     if (chanInfo.id.isSet())
     {
@@ -1682,8 +1785,6 @@ void Servent::sendRawChannel(bool sendHead, bool sendData)
         if (!ch)
             throw StreamException("Channel not found");
 
-        setStatus(S_CONNECTED);
-
         LOG_DEBUG("Starting Raw stream of %s at %d", ch->info.name.cstr(), streamPos);
 
         if (sendHead)
@@ -1715,7 +1816,7 @@ void Servent::sendRawChannel(bool sendHead, bool sendData)
                 {
                     streamIndex = ch->streamIndex;
                     streamPos = ch->headPack.pos;
-                    LOG_DEBUG("sendRaw got new stream index");
+                    LOG_DEBUG("sendRaw got new stream index %u", streamIndex);
                 }
 
                 ChanPacket rawPack;
@@ -1734,7 +1835,7 @@ void Servent::sendRawChannel(bool sendHead, bool sendData)
                             lastWriteTime = sys->getTime();
                         }else
                         {
-                            LOG_DEBUG("raw: skip continuation %s packet pos=%d",
+                            LOG_DEBUG("raw: skip continuation %s packet pos=%u",
                                       (rawPack.type == ChanPacket::T_DATA) ? "DATA" : "HEAD",
                                       rawPack.pos);
                         }
@@ -1769,8 +1870,6 @@ void Servent::sendRawMetaChannel(int interval)
             throw StreamException("Channel not found");
 
         sock->setWriteTimeout(DIRECT_WRITE_TIMEOUT*1000);
-
-        setStatus(S_CONNECTED);
 
         LOG_DEBUG("Starting Raw Meta stream of %s (metaint: %d) at %d", ch->info.name.cstr(), interval, streamPos);
 
@@ -1896,8 +1995,6 @@ void Servent::sendPCPChannel()
     {
         LOG_DEBUG("Starting PCP stream of channel at %d", streamPos);
 
-        setStatus(S_CONNECTED);
-
         atom.writeParent(PCP_CHAN, 3 + ((sendHeader)?1:0));
             atom.writeBytes(PCP_CHAN_ID, chanID.id, 16);
             ch->info.writeInfoAtoms(atom);
@@ -1929,7 +2026,7 @@ void Servent::sendPCPChannel()
             {
                 streamIndex = ch->streamIndex;
                 streamPos = ch->headPack.pos;
-                LOG_DEBUG("sendPCPStream got new stream index");
+                LOG_DEBUG("sendPCPStream got new stream index %u", streamIndex);
             }
 
             ChanPacket rawPack;
@@ -2061,10 +2158,13 @@ int Servent::serverProc(ThreadInfo *thread)
     return 0;
 }
 
+#include "sslclientsocket.h"
 // -----------------------------------
 amf0::Value    Servent::getState()
 {
     std::lock_guard<std::recursive_mutex> cs(lock);
+
+    bool ssl = static_cast<bool>( std::dynamic_pointer_cast<SslClientSocket>(sock) );
 
     return amf0::Value::object(
         {
@@ -2078,7 +2178,9 @@ amf0::Value    Servent::getState()
             {"bitrateAvg", str::format("%.1f", BYTES_TO_KBPS(sock ? sock->stat.bytesInPerSecAvg() + sock->stat.bytesOutPerSecAvg() : 0))},
             {"uptime", (lastConnect) ? String().setFromStopwatch(sys->getTime() - lastConnect).c_str() : "-"},
             {"chanID", chanID.str()},
+            {"remoteID", remoteID.str()},
             {"isPrivate", std::to_string(isPrivate())},
+            {"ssl", ssl},
         });
 }
 

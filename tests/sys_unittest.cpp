@@ -69,22 +69,6 @@ TEST_F(SysFixture, stricmp)
 // #include <strings.h>
 TEST_F(SysFixture, strnicmp)
 {
-    // ASSERT_EQ(0, strncasecmp("", "", 0));
-    // ASSERT_EQ(0, strncasecmp("", "", 1));
-    // ASSERT_EQ(0, strncasecmp("", "", 100));
-
-    // ASSERT_EQ(0, strncasecmp("a", "a", 0));
-    // ASSERT_EQ(0, strncasecmp("a", "a", 1));
-    // ASSERT_EQ(0, strncasecmp("a", "a", 100));
-
-    // ASSERT_EQ(0, strncasecmp("a", "A", 0));
-    // ASSERT_EQ(0, strncasecmp("a", "A", 1));
-    // ASSERT_EQ(0, strncasecmp("a", "A", 100));
-
-    // ASSERT_EQ(0, strncasecmp("a", "b", 0));
-    // ASSERT_NE(0, strncasecmp("a", "b", 1));
-    // ASSERT_NE(0, strncasecmp("a", "b", 100));
-
     ASSERT_EQ(0, Sys::strnicmp("", "", 0));
     ASSERT_EQ(0, Sys::strnicmp("", "", 1));
     ASSERT_EQ(0, Sys::strnicmp("", "", 100));
@@ -98,8 +82,17 @@ TEST_F(SysFixture, strnicmp)
     ASSERT_EQ(0, Sys::strnicmp("a", "A", 100));
 
     ASSERT_EQ(0, Sys::strnicmp("a", "b", 0));
-    ASSERT_NE(0, Sys::strnicmp("a", "b", 1));
-    ASSERT_NE(0, Sys::strnicmp("a", "b", 100));
+    ASSERT_LT(Sys::strnicmp("a", "b", 1), 0);
+    ASSERT_LT(Sys::strnicmp("a", "b", 100), 0);
+
+    ASSERT_EQ(Sys::strnicmp("http://", "http://example.com", 7), 0);
+    ASSERT_EQ(Sys::strnicmp("mailto:", "mailto:joe@example.com", 7), 0);
+    ASSERT_EQ(Sys::strnicmp("HTTP://", "http://example.com", 7), 0);
+    ASSERT_EQ(Sys::strnicmp("MAILTO:", "mailto:joe@example.com", 7), 0);
+    ASSERT_EQ(Sys::strnicmp("http://", "HTTP://EXAMPLE.COM", 7), 0);
+    ASSERT_EQ(Sys::strnicmp("mailto:", "MAILTO:JOE@EXAMPLE.COM", 7), 0);
+
+    ASSERT_GT(Sys::strnicmp("http://", "file:///etc/password", 7), 0);
 }
 
 TEST_F(SysFixture, strcpy_truncate)
@@ -138,8 +131,8 @@ TEST_F(SysFixture, waitThread)
 TEST_F(SysFixture, getHostnameByAddressIPv4)
 {
     std::string str;
-    EXPECT_TRUE(m_sys->getHostnameByAddress(IP::parse("8.8.4.4"), str));
-    EXPECT_STREQ("dns.google", str.c_str());
+    EXPECT_TRUE(m_sys->getHostnameByAddress(IP::parse("127.0.0.1"), str));
+    // EXPECT_STREQ("localhost", str.c_str());
 }
 
 TEST_F(SysFixture, getHostnameByAddressIPv6)

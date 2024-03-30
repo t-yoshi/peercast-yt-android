@@ -13,9 +13,11 @@
 #ifndef _SSLCLIENTSOCKET_H
 #define _SSLCLIENTSOCKET_H
 
+#include <utility> // std::pair
 #include <openssl/ssl.h>
 
 #include "socket.h"
+
 
 class SslClientSocket : public ClientSocket
 {
@@ -39,6 +41,12 @@ public:
     int read(void *, int) override;
     int readUpto(void *, int) override;
     void write(const void *, int) override;
+
+    static std::shared_ptr<SslClientSocket> upgrade(std::shared_ptr<ClientSocket>);
+    void setTimeoutOptions();
+
+    static void configureServer(const std::string& certificate, const std::string& privatekey);
+    static std::pair<std::string,std::string> getServerConfiguration();
 
     struct sockaddr_in6 m_remoteAddr;
     int m_socket;

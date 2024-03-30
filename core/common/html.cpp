@@ -178,10 +178,10 @@ void HTML::addHead()
     char buf[512];
     startNode("head");
         startTagEnd("title", "%s", title.cstr());
-        startTagEnd("meta http-equiv=\"Content-Type\" content=\"text/html; charset=iso-8859-1\"");
+        startTagEnd("meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"");
         if (!refreshURL.isEmpty())
         {
-            sprintf(buf, "meta http-equiv=\"refresh\" content=\"%d;URL=%s\"", refresh, refreshURL.cstr());
+            sprintf(buf, "meta http-equiv=\"refresh\" content=\"%d;URL=%s\"", refresh, cgi::escape_html(refreshURL).c_str());
             startTagEnd(buf);
         }else if (refresh)
         {
@@ -254,7 +254,7 @@ void HTML::startTag(const char *tag, const char *fmt, ...)
 
         va_end(ap);
     }else{
-        startNode(tag, NULL);
+        startNode(tag, nullptr);
     }
 }
 
@@ -272,7 +272,7 @@ void HTML::startTagEnd(const char *tag, const char *fmt, ...)
 
         va_end(ap);
     }else{
-        startNode(tag, NULL);
+        startNode(tag, nullptr);
     }
     end();
 }

@@ -82,7 +82,11 @@ public:
     virtual bool            hasGUI() = 0;
     virtual void            callLocalURL(const char *, int)=0;
     virtual void            executeFile(const char *) = 0;
+    void                    executeFile(const std::string& file) { executeFile(file.c_str()); }
+
     virtual void            setThreadName(const char* name) {}
+    virtual std::string     getThreadName() { return ""; }
+    std::string             getThreadIdString();
 
     virtual std::string     getHostname() { return "localhost"; }
     virtual std::vector<std::string> getIPAddresses(const std::string& name) { return {}; }
@@ -140,6 +144,7 @@ public:
     {
         return path;
     }
+    virtual std::string getCurrentWorkingDirectory() = 0;
 
     unsigned int idleSleepTime;
 

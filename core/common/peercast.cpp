@@ -2,16 +2,19 @@
 #include "peercast.h"
 #include "channel.h"
 #include "servmgr.h"
+#include "str.h"
+#include "sslclientsocket.h"
+#include "yplist.h"
 
 // ---------------------------------
 // globals
 
-Sys *sys=NULL;
+Sys *sys = nullptr;
 ChanMgr *chanMgr;
 ServMgr *servMgr;
 
-PeercastInstance *peercastInst=NULL;
-PeercastApplication *peercastApp=NULL;
+PeercastInstance *peercastInst = nullptr;
+PeercastApplication *peercastApp = nullptr;
 
 // ---------------------------------
 void APICALL PeercastInstance::init()
@@ -19,9 +22,13 @@ void APICALL PeercastInstance::init()
     sys = createSys();
     servMgr = new ServMgr();
     chanMgr = new ChanMgr();
+    g_ypList = new YPList();
 
     if (peercastApp->getIniFilename())
         servMgr->loadSettings(peercastApp->getIniFilename());
+
+    SslClientSocket::configureServer(str::STR(peercastApp->getSettingsDirPath(), "/server.crt"),
+                                     str::STR(peercastApp->getSettingsDirPath(), "/server.key"));
 
     servMgr->loadTokenList();
 
@@ -196,12 +203,31 @@ std::string log_escape(const std::string& str)
 thread_local std::vector<std::function<void(LogBuffer::TYPE type, const char*)>>* AUX_LOG_FUNC_VECTOR = nullptr;
 void ADDLOG(const char *fmt, va_list ap, LogBuffer::TYPE type)
 {
+    // ガード。
     if (!servMgr) return;
     if (servMgr->pauseLog) return;
     if (!sys) return;
 
+    // 1024バイトに切り詰める。[バグ]std::stringクラスを使っているので、
+    // シグナルハンドラーからのログ出力に使われるとメモリアロケーター
+    // を危険に使用する。
     const int MAX_LINELEN = 1024;
     std::string tmp = str::vformat(fmt, ap);
+
+#if 0
+    // スレッドIDを前置。
+    std::string tname = sys->getThreadName();
+    if (tname.empty()) {
+        tmp = str::format("[%s] %s",
+                          sys->getThreadIdString().c_str(),
+                          tmp.c_str());
+    } else {
+        tmp = str::format("[%-15s(%s)] %s",
+                          tname.c_str(),
+                          sys->getThreadIdString().c_str(),
+                          tmp.c_str());
+    }
+#endif
 
     if (str::validate_utf8(tmp)) {
         tmp = str::truncate_utf8(tmp, MAX_LINELEN);
@@ -304,3 +330,15 @@ void notifyMessage(ServMgr::NOTIFY_TYPE type, const std::string& message)
 
 } // namespace peercast
 
+// --------------------------------------------------
+amf0::Value PeercastApplication::getState()
+{
+    return amf0::Value::object({
+            { "path", getPath() },
+            { "settingsDirPath", getSettingsDirPath() },
+            { "iniFilename", getIniFilename() },
+            { "tokenListFilename", getTokenListFilename() },
+            { "cacheDirPath", getCacheDirPath() },
+            { "stateDirPath", getStateDirPath() },
+        });
+}

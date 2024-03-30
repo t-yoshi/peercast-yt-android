@@ -37,7 +37,7 @@ static std::string wsStrError(int err)
     DWORD ret;
     constexpr DWORD langId = MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US);
 
-    ret = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM, NULL, err, langId, buf, sizeof(buf), NULL);
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM, nullptr, err, langId, buf, sizeof(buf), nullptr);
     if (ret == 0) {
         throw GeneralException("FormatMessageA failed");
     }
@@ -58,23 +58,6 @@ void WSAClientSocket::init()
         throw SockException("Unable to init sockets");
 
     //LOG4("WSAStartup:  OK");
-}
-
-// --------------------------------------------------
-bool ClientSocket::getHostname(char *str,unsigned int ip)
-{
-    HOSTENT *he;
-
-    ip = htonl(ip);
-
-    he = gethostbyaddr((char *)&ip,sizeof(ip),AF_INET);
-
-    if (he)
-    {
-        strcpy(str,he->h_name);
-        return true;
-    }else
-        return false;
 }
 
 // --------------------------------------------------
@@ -150,17 +133,17 @@ HOSTENT *WSAClientSocket::resolveHost(const char *hostName)
 {
     HOSTENT *he;
 
-    if ((he = gethostbyname(hostName)) == NULL)
+    if ((he = gethostbyname(hostName)) == nullptr)
     {
         // if failed, try using gethostbyaddr instead
 
         unsigned long ip = inet_addr(hostName);
 
         if (ip == INADDR_NONE)
-            return NULL;
+            return nullptr;
 
-        if ((he = gethostbyaddr((char *)&ip,sizeof(ip),AF_INET)) == NULL)
-            return NULL;
+        if ((he = gethostbyaddr((char *)&ip,sizeof(ip),AF_INET)) == nullptr)
+            return nullptr;
     }
     return he;
 }
@@ -233,7 +216,7 @@ void WSAClientSocket::checkTimeout(bool r, bool w)
         if (timeout.tv_sec != 0  || timeout.tv_usec != 0)
             tp = &timeout;
         else
-            tp = NULL;
+            tp = nullptr;
 
         int r = select(0/*IGNORED*/, &read_fds, &write_fds, &except_fds, tp);
 
@@ -404,7 +387,7 @@ std::shared_ptr<ClientSocket> WSAClientSocket::accept()
     SOCKET conSock = ::accept(sockNum,(sockaddr *)&from,&fromSize);
 
     if (conSock ==  INVALID_SOCKET)
-        return NULL;
+        return nullptr;
 
     auto cs = std::make_shared<WSAClientSocket>();
     cs->sockNum = conSock;
@@ -423,7 +406,7 @@ std::shared_ptr<ClientSocket> WSAClientSocket::accept()
 // --------------------------------------------------
 void WSAClientSocket::close()
 {
-    if (sockNum)
+    if (sockNum != INVALID_SOCKET)
     {
         shutdown(sockNum,SD_SEND);
 
@@ -438,7 +421,7 @@ void WSAClientSocket::close()
         if (closesocket(sockNum))
             LOG_ERROR("closesocket() error");
 
-        sockNum = 0;
+        sockNum = INVALID_SOCKET;
     }
 }
 
@@ -454,10 +437,21 @@ bool    WSAClientSocket::readReady(int timeoutMilliseconds)
     FD_ZERO(&read_fds);
     FD_SET(sockNum, &read_fds);
 
-    int num = select(sockNum+1, &read_fds, NULL, NULL, &timeout);
+    int num = select(sockNum+1, &read_fds, nullptr, nullptr, &timeout);
     if (num == SOCKET_ERROR) {
         throw SockException(str::format("select failed: %s", wsStrError(WSAGetLastError()).c_str()).c_str());
     }
 
     return num == 1;
+}
+
+// --------------------------------------------------
+char WSAClientSocket::peekChar()
+{
+    char c;
+
+    if (recv(sockNum, &c, 1, MSG_PEEK) != 1) {
+        throw StreamException("peekChar failed");
+    }
+    return c;
 }

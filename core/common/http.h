@@ -103,7 +103,7 @@ public:
 #define MIME_JPEG            "image/jpeg"
 #define MIME_GIF             "image/gif"
 #define MIME_PNG             "image/png"
-#define MIME_JS              "application/javascript"
+#define MIME_JS              "application/javascript; charset=utf-8"
 #define MIME_ICO             "image/vnd.microsoft.icon"
 
 // --------------------------------------------
@@ -218,7 +218,7 @@ public:
     HTTPResponse(int aStatusCode, const HTTPHeaders& aHeaders)
         : statusCode(aStatusCode)
         , headers(aHeaders)
-        , stream(NULL)
+        , stream(nullptr)
     {
     }
 
@@ -276,7 +276,7 @@ class HTTP : public IndirectStream
 {
 public:
     HTTP(Stream &s)
-        : arg(NULL)
+        : arg(nullptr)
         , m_headersRead(false)
     {
         cmdLine[0] = '\0';
@@ -305,10 +305,14 @@ public:
         while(nextHeader());
     }
 
+    void writeResponseHeaders(const HTTPHeaders&);
+
+    void writeResponseStatus(const char* protocolVersion, int code);
+
     void reset()
     {
         cmdLine[0] = '\0';
-        arg = NULL;
+        arg = nullptr;
         method = "";
         requestUrl = "";
         protocolVersion = "";
@@ -320,6 +324,7 @@ public:
 
     void send(const HTTPResponse& response);
     HTTPResponse send(const HTTPRequest& request);
+    HTTPResponse getResponse();
 
     char    cmdLine[8192], *arg;
 
@@ -331,5 +336,11 @@ public:
     std::string protocolVersion;
     HTTPHeaders headers;
 };
+
+namespace http {
+
+std::string get(const std::string& url);
+
+}
 
 #endif

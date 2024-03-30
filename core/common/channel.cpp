@@ -54,6 +54,10 @@
 
 #include "version2.h"
 
+#include "defer.h"
+
+#include "yplist.h"
+
 // -----------------------------------
 const char *Channel::srcTypes[] =
 {
@@ -88,7 +92,7 @@ const char *Channel::statusMsgs[] =
 // -----------------------------------------------------------------------------
 Channel::Channel()
 {
-    next = NULL;
+    next = nullptr;
     reset();
 }
 
@@ -98,18 +102,18 @@ void Channel::endThread()
     if (pushSock)
     {
         pushSock->close();
-        pushSock = NULL;
+        pushSock = nullptr;
     }
 
     if (sock)
     {
         sock->close();
-        sock = NULL;
+        sock = nullptr;
     }
 
     if (sourceData)
     {
-        sourceData = NULL;
+        sourceData = nullptr;
     }
 
     reset();
@@ -181,7 +185,7 @@ void Channel::reset()
 
     headPack.init();
 
-    sourceStream = NULL;
+    sourceStream = nullptr;
 
     rawData.init();
     rawData.accept = ChanPacket::T_HEAD | ChanPacket::T_DATA;
@@ -190,11 +194,11 @@ void Channel::reset()
     type = T_NONE;
 
     readDelay = false;
-    sock = NULL;
-    pushSock = NULL;
+    sock = nullptr;
+    pushSock = nullptr;
 
     sourceURL.clear();
-    sourceData = NULL;
+    sourceData = nullptr;
 
     lastTrackerUpdate = 0;
     lastMetaUpdate = 0;
@@ -229,7 +233,7 @@ bool    Channel::checkIdle()
 // チャンネルごとのリレー数制限に達しているか。
 bool    Channel::isFull()
 {
-    return chanMgr->maxRelaysPerChannel ? localRelays() >= chanMgr->maxRelaysPerChannel : false;
+    return chanMgr->maxRelaysPerChannel ? localRelays(/*includePrivate*/ false) >= chanMgr->maxRelaysPerChannel : false;
 }
 
 // -----------------------------------
@@ -247,15 +251,15 @@ bool    Channel::canAddRelay()
 
 
 // -----------------------------------
-int Channel::localRelays()
+int Channel::localRelays(bool includePrivate)
 {
-    return servMgr->numStreams(info.id, Servent::T_RELAY, true);
+    return servMgr->numStreams(info.id, Servent::T_RELAY, includePrivate);
 }
 
 // -----------------------------------
-int Channel::localListeners()
+int Channel::localListeners(bool includePrivate)
 {
-    return servMgr->numStreams(info.id, Servent::T_DIRECT, true);
+    return servMgr->numStreams(info.id, Servent::T_DIRECT, includePrivate);
 }
 
 // -----------------------------------
@@ -349,6 +353,8 @@ THREAD_PROC Channel::stream(ThreadInfo *thread)
     assert(thread->channel != nullptr);
     thread->channel = nullptr; // make sure to not leave the reference behind
 
+    Defer defer([=](){ ch->endThread(); });
+
     sys->setThreadName("CHANNEL");
 
     while (thread->active() && !peercastInst->isQuitting)
@@ -359,7 +365,13 @@ THREAD_PROC Channel::stream(ThreadInfo *thread)
         if (!chl)
             chanMgr->addHitList(ch->info);
 
-        ch->sourceData->stream(ch);
+        try {
+            ch->sourceData->stream(ch);
+        } catch(GeneralException& e) {
+            LOG_ERROR("GeneralException: %s", e.what());
+        } catch(std::exception& e) {
+            LOG_ERROR("std::exception: %s", e.what());
+        }
 
         LOG_INFO("Channel stopped");
 
@@ -384,8 +396,6 @@ THREAD_PROC Channel::stream(ThreadInfo *thread)
             }
         }
     }
-
-    ch->endThread();
 
     return 0;
 }
@@ -453,7 +463,7 @@ int Channel::handshakeFetch()
         {
             // info の為。ロックする範囲が狭すぎるか。
             std::lock_guard<std::recursive_mutex> cs(lock);
-            Servent::readICYHeader(http, info, NULL, 0);
+            Servent::readICYHeader(http, info, nullptr, 0);
         }
 
         LOG_INFO("Channel fetch: %s", http.cmdLine);
@@ -572,8 +582,40 @@ static std::string chName(ChanInfo& info)
 }
 
 // -----------------------------------
+static std::string feedUrlToRootHost(const std::string& feedUrl)
+{
+    std::shared_ptr<const std::vector<YP>> list = g_ypList->getList();
+
+    for (auto it = list->cbegin(); it != list->cend(); ++it) {
+        if (feedUrl == it->feedUrl) {
+            return it->rootHost;
+        }
+    }
+    LOG_WARN("%s: Entry not found for '%s'", __func__, feedUrl.c_str());
+    return "";
+}
+
+// -----------------------------------
 void PeercastSource::stream(std::shared_ptr<Channel> ch)
 {
+    auto isOwnGlobalIP = [](const IP& ip) {
+                             if (servMgr->serverHost.ip.isGlobal() && servMgr->serverHost.ip == ip)
+                                 return true;
+
+                             // IPv6 は関係ない気がする。
+                             //if (servMgr->serverHostIPv6.ip.isGlobal() && serverHostIPv6.ip == ip)
+                             //    return true;
+
+                             return false;
+                         };
+    if (!servMgr->serverHost.ip.isGlobal()) {
+        LOG_INFO("Checking own global IP ...");
+        servMgr->checkFirewall();
+        if (!servMgr->serverHost.ip.isGlobal()) {
+            LOG_ERROR("Could not determine own global IP. LAN relaying may not work.");
+        }
+    }
+
     m_channel = ch;
 
     int numYPTries = 0;
@@ -588,7 +630,7 @@ void PeercastSource::stream(std::shared_ptr<Channel> ch)
             if (ch->pushSock)
             {
                 ch->sock = ch->pushSock;
-                ch->pushSock = NULL;
+                ch->pushSock = nullptr;
                 ch->sourceHost.host = ch->sock->host;
                 break;
             }
@@ -605,14 +647,39 @@ void PeercastSource::stream(std::shared_ptr<Channel> ch)
             // consult channel directory
             if (!ch->sourceHost.host.ip)
             {
-                std::string trackerIP = servMgr->channelDirectory->findTracker(ch->info.id);
-                if (!trackerIP.empty())
+                std::shared_ptr<ChannelEntry> ent = servMgr->channelDirectory->findEntry(ch->info.id);
+                LOG_DEBUG("consulting chandir for %s", chName(ch->info).c_str());
+                LOG_DEBUG("ent == %p", ent.get());
+                if (ent)
                 {
-                    peercast::notifyMessage(ServMgr::NT_PEERCAST, "チャンネルフィードで "+chName(ch->info)+" のトラッカーが見付かりました。");
+                    const auto rh = feedUrlToRootHost(ent->feedUrl);
+                    LOG_DEBUG("feedUrlToRooHost('%s') = '%s'", ent->feedUrl.c_str(), rh.c_str());
+                    if (!rh.empty())
+                    {
+                        ch->rootHost = rh;
+                        LOG_INFO("Root host for channel %s set to '%s'", chName(ch->info).c_str(), rh.c_str());
+                    }
+                }
 
-                    Host host = Host::fromString(trackerIP.c_str());
-                    if (!host.port)
-                        host.port = DEFAULT_PORT;
+
+                if (ent && !ent->tip.empty())
+                    {
+                    //peercast::notifyMessage(ServMgr::NT_PEERCAST, "チャンネルフィードで "+chName(ch->info)+" のトラッカーが見付かりました。");
+                    LOG_DEBUG("%s", ("チャンネルフィードで " + chName(ch->info) + " のトラッカーが見付かりました。").c_str());
+
+                    Host host = Host::fromString(ent->tip, DEFAULT_PORT);
+                    if (host.port == 0)
+                    {
+                        LOG_DEBUG("ポート0のトラッカーIPはホストキャッシュに登録しない。(チャンネルフィードから)");
+                        goto Abort;
+                    }
+                    if (isOwnGlobalIP(host.ip))
+                    {
+                        LOG_DEBUG("%s: Tracker has the same global IP %s as local host. Not connecting.",
+                                  chName(ch->info).c_str(),
+                                  host.ip.str().c_str());
+                        goto Abort;
+                    }
 
                     ch->sourceHost.host = host;
                     ch->sourceHost.rhost[0] = host;
@@ -623,12 +690,14 @@ void PeercastSource::stream(std::shared_ptr<Channel> ch)
                         chl->addHit(ch->sourceHost);
                     break;
                 }
+            Abort:
+                ;
             }
 
             // no trackers found so contact YP
             if (!ch->sourceHost.host.ip)
             {
-                if (servMgr->rootHost.isEmpty())
+                if (ch->rootHost.empty())
                     break;
 
                 if (numYPTries >= 3)
@@ -637,7 +706,7 @@ void PeercastSource::stream(std::shared_ptr<Channel> ch)
                 unsigned int ctime = sys->getTime();
                 if ((ctime - chanMgr->lastYPConnect) > MIN_YP_RETRY)
                 {
-                    ch->sourceHost.host.fromStrName(servMgr->rootHost.cstr(), DEFAULT_PORT);
+                    ch->sourceHost.host.fromStrName(ch->rootHost.c_str(), DEFAULT_PORT);
                     ch->sourceHost.yp = true;
                     chanMgr->lastYPConnect = ctime;
                 }
@@ -656,7 +725,7 @@ void PeercastSource::stream(std::shared_ptr<Channel> ch)
         {
             numYPTries++;
             LOG_INFO("Channel contacting YP, try %d", numYPTries);
-            peercast::notifyMessage(ServMgr::NT_PEERCAST, "チャンネル "+chName(ch->info)+" をYPに問い合わせています...");
+            //peercast::notifyMessage(ServMgr::NT_PEERCAST, "チャンネル "+chName(ch->info)+" をYPに問い合わせています...");
         }else
         {
             LOG_INFO("Channel found hit");
@@ -667,8 +736,9 @@ void PeercastSource::stream(std::shared_ptr<Channel> ch)
         {
             //bool isTrusted = ch->sourceHost.tracker | ch->sourceHost.yp;
 
-            if (ch->sourceHost.tracker)
-                peercast::notifyMessage(ServMgr::NT_PEERCAST, "チャンネル "+chName(ch->info)+" をトラッカーに問い合わせています...");
+            if (ch->sourceHost.tracker) {
+                //peercast::notifyMessage(ServMgr::NT_PEERCAST, "チャンネル "+chName(ch->info)+" をトラッカーに問い合わせています...");
+            }
 
             char ipstr[64];
             strcpy(ipstr, ch->sourceHost.host.str().c_str());
@@ -735,14 +805,14 @@ void PeercastSource::stream(std::shared_ptr<Channel> ch)
                 }catch (StreamException &)
                 {}
                 auto cs = ch->sourceStream;
-                ch->sourceStream = NULL;
+                ch->sourceStream = nullptr;
                 cs->kill();
             }
 
             if (ch->sock)
             {
                 ch->sock->close();
-                ch->sock = NULL;
+                ch->sock = nullptr;
             }
 
             if (error == 404)
@@ -816,7 +886,7 @@ static char *nextMetaPart(char *str, char delim)
         }
         str++;
     }
-    return NULL;
+    return nullptr;
 }
 
 // -----------------------------------
@@ -910,7 +980,7 @@ XML::Node *Channel::createRelayXML(bool showStat)
     return new XML::Node("relay listeners=\"%d\" relays=\"%d\" hosts=\"%d\" status=\"%s\"",
         localListeners(),
         localRelays(),
-        (chl!=NULL)?chl->numHits():0,
+        (chl!=nullptr)?chl->numHits():0,
         ststr
         );
 }
@@ -1018,12 +1088,14 @@ bool    Channel::sendPacketUp(ChanPacket &pack, const GnuID &cid, const GnuID &s
 }
 
 // -----------------------------------
-void Channel::updateInfo(const ChanInfo &newInfo)
+// 変更が成功したら true を、失敗したら false を返す。
+// -----------------------------------
+bool Channel::updateInfo(const ChanInfo &newInfo)
 {
     String oldComment = info.comment;
 
     if (!info.update(newInfo))
-        return; // チャンネル情報は更新されなかった。
+        return false; // チャンネル情報は更新されなかった。
 
     // コメント更新の通知。
     if (!oldComment.isSame(info.comment))
@@ -1076,6 +1148,7 @@ void Channel::updateInfo(const ChanInfo &newInfo)
     }
 
     peercastApp->channelUpdate(&info);
+    return true;
 }
 
 // -----------------------------------
@@ -1184,14 +1257,14 @@ int Channel::readStream(Stream &in, std::shared_ptr<ChannelStream> source)
             if (checkIdle())
             {
                 LOG_DEBUG("Channel idle");
-                peercast::notifyMessage(ServMgr::NT_PEERCAST, "チャンネル "+chName(info)+" がアイドル状態になりました。");
+                //peercast::notifyMessage(ServMgr::NT_PEERCAST, "チャンネル "+chName(info)+" がアイドル状態になりました。");
                 break;
             }
 
             if (checkBump())
             {
                 LOG_DEBUG("Channel bumped");
-                peercast::notifyMessage(ServMgr::NT_PEERCAST, "チャンネル "+chName(info)+" をバンプしました。");
+                //peercast::notifyMessage(ServMgr::NT_PEERCAST, "チャンネル "+chName(info)+" をバンプしました。");
                 error = -1;
                 break;
             }
@@ -1371,7 +1444,7 @@ amf0::Value Channel::getState()
 
     return amf0::Value::object(
         {
-            {"name", String(info.name).convertTo(String::T_UNICODESAFE).c_str()},
+            {"name", String(info.name).convertTo(String::T_UNICODE).c_str()},
             {"bitrate", to_string(info.bitrate)},
             {"srcrate", (sourceData) ? str::format("%.0f", BYTES_TO_KBPS(sourceData->getSourceRate())) : "0"},
             {"genre", String(info.genre).convertTo(String::T_UNICODE).c_str()},
@@ -1411,6 +1484,7 @@ amf0::Value Channel::getState()
             {"authToken", chanMgr->authToken(info.id).c_str()},
             {"plsExt", info.getPlayListExt()},
             {"ipVersion", std::to_string((int)ipVersion)},
+            {"rootHost", rootHost},
         });
 }
 

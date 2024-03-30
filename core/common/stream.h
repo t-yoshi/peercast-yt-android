@@ -190,6 +190,10 @@ public:
 
     void    write(const char *, va_list);
     void    writeLine(const char *);
+    void    writeLine(const std::string& s)
+    {
+        writeLine(s.c_str());
+    }
     void    writeLineF(const char *, ...) __attribute__ ((format (printf, 2, 3)));
     void    writeString(const char *);
     void    writeString(const std::string& s)
@@ -339,7 +343,7 @@ public:
 class FileStream : public Stream
 {
 public:
-    FileStream() { file=NULL; }
+    FileStream() { file=nullptr; }
     ~FileStream() { close(); }
 
     void    openReadOnly(const char *);
@@ -350,7 +354,7 @@ public:
     void    openWriteReplace(int fd);
     void    openWriteAppend(const char *);
     void    openWriteAppend(const std::string& fn) { openWriteAppend(fn.c_str()); }
-    bool    isOpen() { return file!=NULL; }
+    bool    isOpen() { return file!=nullptr; }
     int     length();
     int     pos();
 
@@ -490,6 +494,44 @@ public:
     }
 
     Stream *stream;
+};
+
+// --------------------------------------------------
+class CopyingStream : public IndirectStream
+{
+public:
+    CopyingStream(Stream *s)
+    {
+        IndirectStream::init(s);
+    }
+
+    int read(void *p, int l) override
+    {
+        int bytes = stream->read(p, l);
+        const char *q = reinterpret_cast<const char*>(p);
+        dataRead += std::string(q, q + bytes);
+        return bytes;
+    }
+
+    void write(const void *p, int l) override
+    {
+        stream->write(p, l);
+        const char *q = reinterpret_cast<const char*>(p);
+        dataWritten += std::string(q, q + l);
+    }
+
+    bool eof() override
+    {
+        return stream->eof();
+    }
+
+    void close() override
+    {
+        stream->close();
+    }
+
+    std::string dataRead;
+    std::string dataWritten;
 };
 
 // --------------------------------------------------

@@ -30,6 +30,8 @@
 #include "defer.h"
 #include "dechunker.h"
 
+static const char* statusMessage(int statusCode);
+
 //-----------------------------------------
 bool HTTP::checkResponse(int r)
 {
@@ -117,7 +119,7 @@ bool    HTTP::nextHeader()
         return true;
     }else
     {
-        arg = NULL;
+        arg = nullptr;
         m_headersRead = true;
         return false;
     }
@@ -126,7 +128,7 @@ bool    HTTP::nextHeader()
 //-----------------------------------------
 bool    HTTP::isHeader(const char *hs)
 {
-    return stristr(cmdLine, hs) != NULL;
+    return stristr(cmdLine, hs) != nullptr;
 }
 
 //-----------------------------------------
@@ -198,6 +200,34 @@ void HTTP::parseAuthorizationHeader(const std::string& arg, std::string& sUser, 
 }
 
 // -----------------------------------
+void HTTP::writeResponseHeaders(const HTTPHeaders& additionalHeaders)
+{
+    std::map<std::string,std::string> headers = {
+        {"Server", PCX_AGENT},
+        {"Connection", "close"},
+        {"Date", cgi::rfc1123Time(sys->getTime())}
+    };
+
+    for (const auto& pair : additionalHeaders)
+        headers[str::capitalize(pair.first)] = pair.second;
+
+    for (const auto& pair : headers)
+        writeLineF("%s: %s", pair.first.c_str(), pair.second.c_str());
+
+    writeLine("");
+}
+
+// -----------------------------------
+void HTTP::writeResponseStatus(const char* protocolVersion, int code)
+{
+    if (strcmp(protocolVersion, "HTTP/1.0") != 0 &&
+        strcmp(protocolVersion, "HTTP/1.1") != 0) {
+        throw ArgumentException(str::format("Unknown protocol version string \"%s\"", protocolVersion));
+    }
+    writeLineF("%s %d %s", protocolVersion, code, statusMessage(code));
+}
+
+// -----------------------------------
 static const char* statusMessage(int statusCode)
 {
     switch (statusCode)
@@ -258,7 +288,7 @@ void HTTP::send(const HTTPResponse& response)
 
     writeCRLF = true;
 
-    writeLineF("HTTP/1.0 %d %s", response.statusCode, statusMessage(response.statusCode));
+    writeResponseStatus("HTTP/1.0", response.statusCode);
 
     std::map<std::string,std::string> headers = {
         {"Server", PCX_AGENT},
@@ -274,10 +304,10 @@ void HTTP::send(const HTTPResponse& response)
     }
 
     for (const auto& pair : response.headers)
-        headers[pair.first] = pair.second;
+        headers[str::capitalize(pair.first)] = pair.second;
 
     for (const auto& pair : headers)
-        writeLineF("%s: %s", str::capitalize(pair.first).c_str(), pair.second.c_str());
+        writeLineF("%s: %s", pair.first.c_str(), pair.second.c_str());
 
     writeLine("");
 
@@ -302,10 +332,12 @@ void HTTP::send(const HTTPResponse& response)
 // -----------------------------------
 HTTPResponse HTTP::send(const HTTPRequest& request)
 {
+    const auto pathQuery = request.queryString.size() ? request.path + "?" + request.queryString : request.path;
+
     // send request
     stream->writeLineF("%s %s %s",
                        request.method.c_str(),
-                       request.path.c_str(),
+                       pathQuery.c_str(),
                        request.protocolVersion.c_str());
     for (auto it = request.headers.begin(); it != request.headers.end(); ++it)
     {
@@ -323,6 +355,11 @@ HTTPResponse HTTP::send(const HTTPRequest& request)
         stream->writeString(request.body);
     }
 
+    return getResponse();
+}
+
+HTTPResponse HTTP::getResponse()
+{
     // receive response
     int status = readResponse();
     readHeaders();
@@ -340,13 +377,96 @@ HTTPResponse HTTP::send(const HTTPRequest& request)
     }else
     {
         std::string contentLengthStr = headers.get("Content-Length");
-        if (contentLengthStr.empty())
-            throw StreamException("Content-Length missing");
-        int length = atoi(contentLengthStr.c_str());
-        if (length < 0)
-            throw StreamException("invalid Content-Length value");
+        if (contentLengthStr.empty()) {
+            int length = atoi(contentLengthStr.c_str());
+            if (length < 0)
+                throw StreamException("invalid Content-Length value");
 
-        response.body = stream->read(length);
+            response.body = stream->read(length);
+        }else
+        {
+            try {
+                while (true)
+                    response.body += stream->readChar();
+            }catch(StreamException& e)
+            {
+            }
+        }
     }
     return response;
 }
+
+#include "sslclientsocket.h" // SslClientSocket
+#include "uri.h"
+namespace http {
+
+std::string get(const std::string& _url)
+{
+    std::string url = _url;
+    const std::string originalUrl = url;
+    int retryCount = 0;
+
+Retry:
+    if (retryCount > 1) {
+        throw StreamException("Too many redirections. Giving up ...");
+    }
+
+    URI feed(url);
+    if (!feed.isValid()) {
+        throw ArgumentException(str::format("invalid URL (%s)", url.c_str()));
+    }
+    if (feed.scheme() != "http" && feed.scheme() != "https") {
+        throw ArgumentException(str::format("unsupported protocol (%s)", url.c_str()));
+    }
+
+    Host host;
+    host.fromStrName(feed.host().c_str(), feed.port());
+    if (!host.ip) {
+        throw StreamException(str::format("Could not resolve %s", feed.host().c_str()));
+    }
+
+    std::shared_ptr<ClientSocket> rsock;
+    if (feed.scheme() == "https") {
+        rsock = std::make_shared<SslClientSocket>();
+    } else {
+        rsock = sys->createSocket();
+    }
+
+    LOG_TRACE("Connecting to %s (%s) port %d ...", feed.host().c_str(), host.ip.str().c_str(), feed.port());
+    rsock->open(host);
+    rsock->connect();
+    LOG_TRACE("Connected to %s", host.str().c_str());
+
+    HTTP rhttp(*rsock);
+    const std::string reqPath =  feed.query().size() ? feed.path() + "?" + feed.query() : feed.path();
+    LOG_TRACE("GET %s HTTP/1.1", reqPath.c_str());
+
+    HTTPRequest req("GET", reqPath, "HTTP/1.1",
+                    {
+                     { "Host", feed.host() },
+                     { "Connection", "close" },
+                     { "User-Agent", PCX_AGENT }
+                    });
+
+    HTTPResponse res = rhttp.send(req);
+    if (res.statusCode == 301 || res.statusCode == 302 || res.statusCode == 307 || res.statusCode == 308) {
+        const auto loc = res.headers.get("Location");
+        /* redirect */
+        if (loc != "") {
+            LOG_TRACE("Status code %d. Redirecting to %s ...", res.statusCode, loc.c_str());
+            url = loc;
+            retryCount++;
+            goto Retry;
+        }else {
+            LOG_ERROR("Status code %d. No Location header. Giving up ...", res.statusCode);
+            throw StreamException("No Location header");
+        }
+    }else if (res.statusCode != 200) {
+        LOG_ERROR("%s: status code %d", feed.host().c_str(), res.statusCode);
+        throw StreamException(str::format("status code %d", res.statusCode));
+    }
+
+    return res.body;
+}
+
+} // namespace http

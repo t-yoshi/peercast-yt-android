@@ -35,10 +35,12 @@
 #include "uptest.h"
 #include "portcheck.h"
 #include "json.hpp"
+#include "cgi.h"
 
 // -----------------------------------
 ServMgr::ServMgr()
-    : relayBroadcast(30) // オリジナルでは未初期化。
+    : serverIPAddresses({IP::parse("127.0.0.1"), IP::parse("::1")})
+    , relayBroadcast(30) // オリジナルでは未初期化。
     , channelDirectory(new ChannelDirectory())
     , publicDirectoryEnabled(false)
     , uptestServiceRegistry(new UptestServiceRegistry())
@@ -55,6 +57,8 @@ ServMgr::ServMgr()
             {"startPlayingFromKeyFrame", "DIRECT接続でキーフレームまで継続パケットをスキップする。", true},
             {"banTrackersWhileBroadcasting", "配信中他の配信者による視聴をBANする。", false},
             {"persistTokenList", "アクセストークンリストを永続化する。", false},
+            {"enableSSLServer", "SSL接続の受け付けを有効にする。", false},
+            {"requireContinuationPacketSupportFromPeer", "継続パケットをサポートしないバージョンのクライアントとリレーしない。", false},
         })
     , preferredTheme("system")
     , accentColor("blue")
@@ -94,13 +98,14 @@ ServMgr::ServMgr()
 
     forceIP.clear();
 
-    strcpy(connectHost, "connect1.peercast.org");
     strcpy(htmlPath, "html/en");
 
     rootHost = "yp.pcgw.pgw.jp:7146";
 
     serverHost.fromStrIP("127.0.0.1", DEFAULT_PORT);
     serverHostIPv6 = Host(IP::parse("::1"), DEFAULT_PORT);
+    serverLocalIP = IP::parse("127.0.0.1");
+    serverLocalIPv6 = IP::parse("::1");
 
     firewalled = FW_UNKNOWN;
     firewalledIPv6 = FW_UNKNOWN;
@@ -127,7 +132,7 @@ ServMgr::ServMgr()
     numFilters = 0;
     ensureCatchallFilters();
 
-    servents = NULL;
+    servents = nullptr;
 
     chanLog="";
 
@@ -160,29 +165,74 @@ ServMgr::~ServMgr()
 }
 
 // ------------------------------------
-bool ServMgr::updateIPAddress(const IP& newIP)
+void ServMgr::updateIPAddress(const IP& newIP)
 {
     std::lock_guard<std::recursive_mutex> cs(lock);
-    bool success = false;
 
-    if (newIP.isIPv4Mapped()) {
-        auto score = [](const IP& ip) -> int {
-            if (ip.isIPv4Loopback())
-                return 0;
-            else if (ip.isIPv4Private())
-                return 1;
-            else
-                return 2;
-        };
-        if (score(serverHost.ip) < score(newIP)) {
-            IP oldIP = serverHost.ip;
-            serverHost.ip = newIP;
-            LOG_INFO("Server IPv4 address changed to %s (was %s)",
-                     newIP.str().c_str(),
-                     oldIP.str().c_str());
-            success = true;
-        }
+    auto it = find(serverIPAddresses.begin(), serverIPAddresses.end(), newIP);
+    if (it == serverIPAddresses.end()) {
+        serverIPAddresses.push_front(newIP);
     } else {
+        return;
+    }
+
+    {//IPv4
+        auto score = [](const IP& ip) -> int {
+                         if (ip.isIPv4Loopback())
+                             return 0;
+                         else if (ip.isIPv4Private())
+                             return 1;
+                         else
+                             return 2;
+                     };
+        const int oldScore = score(serverHost.ip);
+
+        for (auto ip : serverIPAddresses) {
+            if (!ip.isIPv4Mapped())
+                continue;
+
+            if (oldScore <= score(ip)) {
+                IP oldIP = serverHost.ip;
+                if (oldIP != ip) {
+                    serverHost.ip = ip;
+                    LOG_INFO("Server IPv4 address changed to %s (was %s)",
+                             ip.str().c_str(),
+                             oldIP.str().c_str());
+                }
+                break;
+            }
+        }
+    }
+
+    {//IPv4 Local
+        auto score = [](const IP& ip) -> int {
+                         if (ip.isIPv4Loopback())
+                             return 0;
+                         else if (ip.isIPv4Private())
+                             return 1;
+                         else
+                             return 2;
+                     };
+        const int oldScore = score(serverLocalIP);
+
+        for (auto ip : serverIPAddresses) {
+            if (!ip.isIPv4Mapped())
+                continue;
+
+            if (oldScore <= score(ip) && score(ip) < 2) {
+                IP oldIP = serverLocalIP;
+                if (oldIP != ip) {
+                    serverLocalIP = ip;
+                    LOG_INFO("Server local IPv4 address changed to %s (was %s)",
+                             ip.str().c_str(),
+                             oldIP.str().c_str());
+                }
+                break;
+            }
+        }
+    }
+
+    {//IPv6
         auto score = [](const IP& ip) -> int {
             if (ip.isIPv6Loopback())
                 return 0;
@@ -193,16 +243,52 @@ bool ServMgr::updateIPAddress(const IP& newIP)
             else
                 return 3;
         };
-        if (score(serverHostIPv6.ip) < score(newIP)) {
-            IP oldIP = serverHostIPv6.ip;
-            serverHostIPv6.ip = newIP;
-            LOG_INFO("Server IPv6 address changed to %s (was %s)",
-                     newIP.str().c_str(),
-                     oldIP.str().c_str());
-            success = true;
+        const int oldScore = score(serverHostIPv6.ip);
+        for (auto ip : serverIPAddresses) {
+            if (ip.isIPv4Mapped())
+                continue;
+
+            if (oldScore <= score(ip)) {
+                IP oldIP = serverHostIPv6.ip;
+                if (oldIP != ip) {
+                    serverHostIPv6.ip = ip;
+                    LOG_INFO("Server IPv6 address changed to %s (was %s)",
+                             ip.str().c_str(),
+                             oldIP.str().c_str());
+                }
+                break;
+            }
         }
     }
-    return success;
+
+    {//IPv6 local
+        auto score = [](const IP& ip) -> int {
+            if (ip.isIPv6Loopback())
+                return 0;
+            else if (ip.isIPv6LinkLocal())
+                return 1;
+            else if (ip.isIPv6UniqueLocal())
+                return 2;
+            else
+                return 3;
+        };
+        const int oldScore = score(serverLocalIPv6);
+        for (auto ip : serverIPAddresses) {
+            if (ip.isIPv4Mapped())
+                continue;
+
+            if (oldScore <= score(ip) && score(ip) < 3) {
+                IP oldIP = serverLocalIPv6;
+                if (oldIP != ip) {
+                    serverLocalIPv6 = ip;
+                    LOG_INFO("Server local IPv6 address changed to %s (was %s)",
+                             ip.str().c_str(),
+                             oldIP.str().c_str());
+                }
+                break;
+            }
+        }
+    }
 }
 
 // -----------------------------------
@@ -271,7 +357,7 @@ void ServMgr::addHost(Host &h, ServHost::TYPE type, unsigned int time)
     if (!h.isValid())
         return;
 
-    ServHost *sh=NULL;
+    ServHost *sh=nullptr;
 
     for (int i=0; i<MAX_HOSTCACHE; i++)
         if (hostCache[i].type == type)
@@ -350,7 +436,7 @@ int ServMgr::getNewestServents(Host *hl, int max, Host &rh)
     for (int i=0; i<max; i++)
     {
         // find newest host not in list
-        ServHost *sh=NULL;
+        ServHost *sh=nullptr;
         for (int j=0; j<MAX_HOSTCACHE; j++)
         {
             // find newest servent
@@ -390,7 +476,7 @@ int ServMgr::getNewestServents(Host *hl, int max, Host &rh)
 // -----------------------------------
 Servent *ServMgr::findOldestServent(Servent::TYPE type, bool priv)
 {
-    Servent *oldest=NULL;
+    Servent *oldest=nullptr;
 
     Servent *s = servents;
     while (s)
@@ -424,7 +510,7 @@ Servent *ServMgr::findServent(Servent::TYPE type, Host &host, const GnuID &netid
         s = s->next;
     }
 
-    return NULL;
+    return nullptr;
 }
 
 // -----------------------------------
@@ -446,7 +532,7 @@ Servent *ServMgr::findServent(unsigned int ip, unsigned short port, const GnuID 
         s = s->next;
     }
 
-    return NULL;
+    return nullptr;
 }
 
 // -----------------------------------
@@ -461,7 +547,7 @@ Servent *ServMgr::findServent(Servent::TYPE t)
             return s;
         s = s->next;
     }
-    return NULL;
+    return nullptr;
 }
 
 // -----------------------------------
@@ -480,7 +566,7 @@ Servent *ServMgr::findServentByIndex(int id)
         s = s->next;
     }
 
-    return NULL;
+    return nullptr;
 }
 
 // -----------------------------------
@@ -497,7 +583,7 @@ Servent *ServMgr::findServentByID(int id)
         s = s->next;
     }
 
-    return NULL;
+    return nullptr;
 }
 
 // -----------------------------------
@@ -732,7 +818,7 @@ void ServMgr::checkFirewall()
         }
 
         auto sock = sys->createSocket();
-        if (!sock)
+        if (!sock) // これは絶対に起こらない。
             throw StreamException("Unable to create socket");
         sock->setReadTimeout(30000);
         sock->open(host);
@@ -740,6 +826,7 @@ void ServMgr::checkFirewall()
 
         AtomStream atom(*sock);
 
+        // IPv4 なのでプロトコルバージョンは 1 。
         atom.writeInt(PCP_CONNECT, 1);
 
         GnuID remoteID;
@@ -828,7 +915,8 @@ void ServMgr::checkFirewallIPv6()
 
         AtomStream atom(*sock);
 
-        atom.writeInt(PCP_CONNECT, 1);
+        // IPv6 なのでプロトコルバージョンは 100 。
+        atom.writeInt(PCP_CONNECT, 100);
 
         GnuID remoteID;
         String agent;
@@ -1496,7 +1584,7 @@ void ServMgr::loadSettings(const char *fn)
                 }else
                 {
                     info.bcID = chanMgr->broadcastID;
-                    auto c = chanMgr->createChannel(info, NULL);
+                    auto c = chanMgr->createChannel(info);
                     c->ipVersion = ipv;
                     if (c)
                         c->startURL(sourceURL.cstr());
@@ -1583,7 +1671,10 @@ void ServMgr::loadTokenList()
             cookies.push_back(cookie);
         }
 
+        // This shouldn't be needed ...
+        auto neverExpire = this->cookieList.neverExpire;
         this->cookieList.init();
+        this->cookieList.neverExpire = neverExpire;
         for (auto& cookie : cookies)
         {
             this->cookieList.add(cookie);
@@ -1695,15 +1786,18 @@ Servent *ServMgr::findConnection(Servent::TYPE t, const GnuID &sid)
                     return sv;
         sv=sv->next;
     }
-    return NULL;
+    return nullptr;
 }
 
 // --------------------------------------------------
+// "[チャンネルID](?クエリ文字列)" の形式の文字列から、info のチャンネ
+// ルIDを設定し、加えてクエリ文字列の ip, tip パラメータを元をチャンネ
+// ルのヒットリストに登録する。
+//
+// 注意: str, info 共に変更される。str からは ? で始まるクエリ文字列が
+// 削除される。
 void ServMgr::procConnectArgs(char *str, ChanInfo &info)
 {
-    char arg[MAX_CGI_LEN];
-    char curr[MAX_CGI_LEN];
-
     const char *args = strstr(str, "?");
     if (args)
     {
@@ -1711,36 +1805,39 @@ void ServMgr::procConnectArgs(char *str, ChanInfo &info)
         args++;
     }
 
+    // IDでなかったら ChanInfo の名前フィールドにstrがコピーされるが、
+    // その挙動が今や役に立つのか疑問。
     info.initNameID(str);
 
-    if (args)
+    cgi::Query query(args ? args : "");
+
+    if (!query.get("ip").empty())
+    // ip - add hit
     {
-        while ((args = nextCGIarg(args, curr, arg)) != nullptr)
+        Host h;
+        h.fromStrName(query.get("ip").c_str(), DEFAULT_PORT);
+        ChanHit hit;
+        hit.init();
+        hit.host = h;
+        hit.rhost[0] = h;
+        hit.rhost[1].init();
+        hit.chanID = info.id;
+        hit.recv = true;
+
+        chanMgr->addHit(hit);
+    }else if (!query.get("tip").empty())
+    // tip - add tracker hit
+    {
+        Host h = Host::fromString(query.get("tip"), DEFAULT_PORT);
+        if (h.port == 0)
         {
-            LOG_DEBUG("cmd: %s, arg: %s", curr, arg);
-
-            if (strcmp(curr, "ip")==0)
-            // ip - add hit
-            {
-                Host h;
-                h.fromStrName(arg, DEFAULT_PORT);
-                ChanHit hit;
-                hit.init();
-                hit.host = h;
-                hit.rhost[0] = h;
-                hit.rhost[1].init();
-                hit.chanID = info.id;
-                hit.recv = true;
-
-                chanMgr->addHit(hit);
-            }else if (strcmp(curr, "tip")==0)
-            // tip - add tracker hit
-            {
-                Host h = Host::fromString(arg);
-                if (h.port == 0)
-                    h.port = DEFAULT_PORT;
-                chanMgr->addHit(h, info.id, true);
-            }
+            LOG_DEBUG("ポート0のトラッカーIPはホストキャッシュに登録しない。");
+        }else if (h.ip == serverHost.ip || h.ip == serverHostIPv6.ip)
+        {
+            LOG_DEBUG("'tip' parameter is server global IP(%s). Ignored.", h.ip.str().c_str());
+        }else
+        {
+            chanMgr->addHit(h, info.id, true);
         }
     }
 }
@@ -1775,74 +1872,6 @@ bool ServMgr::start()
         return false;
 
     return true;
-}
-
-// --------------------------------------------------
-int ServMgr::clientProc(ThreadInfo *thread)
-{
-#if 0
-    thread->lock();
-
-    GnuID netID;
-    netID = this->networkID;
-
-    while (thread->active)
-    {
-        if (this->autoConnect)
-        {
-            if (this->needConnections() || this->forceLookup)
-            {
-                if (this->needHosts() || this->forceLookup)
-                {
-                    // do lookup to find some hosts
-
-                    Host lh;
-                    lh.fromStrName(this->connectHost, DEFAULT_PORT);
-
-                    if (!this->findServent(lh.ip, lh.port, netID))
-                    {
-                        Servent *sv = this->allocServent();
-                        if (sv)
-                        {
-                            LOG_DEBUG("Lookup: %s", this->connectHost);
-                            sv->networkID = netID;
-                            sv->initOutgoing(lh, Servent::T_LOOKUP);
-                            this->forceLookup = false;
-                        }
-                    }
-                }
-
-                for (int i=0; i<MAX_TRYOUT; i++)
-                {
-                    if (this->outUsedFull())
-                        break;
-                    if (this->tryFull())
-                        break;
-
-                    ServHost sh = this->getOutgoingServent(netID);
-
-                    if (!this->addOutgoing(sh.host, netID, false))
-                        this->deadHost(sh.host, ServHost::T_SERVENT);
-                    sys->sleep(this->tryoutDelay);
-                    break;
-                }
-            }
-        }else{
-#if 0
-            Servent *s = this->servents;
-            while (s)
-            {
-                if (s->type == Servent::T_OUTGOING)
-                    s->thread.shutdown();
-                s=s->next;
-            }
-#endif
-        }
-        sys->sleepIdle();
-    }
-    thread->unlock();
-#endif
-    return 0;
 }
 
 // -----------------------------------
@@ -2143,6 +2172,7 @@ ServHost::TYPE ServHost::getTypeFromStr(const char *s)
 amf0::Value ServMgr::getState()
 {
     using std::to_string;
+    std::lock_guard<std::recursive_mutex> cs(lock);
 
     std::vector<amf0::Value> filterArray;
     for (int i = 0; i < this->numFilters; i++)
@@ -2151,6 +2181,11 @@ amf0::Value ServMgr::getState()
     std::vector<amf0::Value> serventArray;
     for (auto sv = servents; sv != nullptr; sv = sv->next)
         serventArray.push_back(sv->getState());
+
+    std::vector<amf0::Value> servaddrs;
+    for (auto ip : this->serverIPAddresses) {
+        servaddrs.push_back(ip.str());
+    }
 
     return amf0::Value::object(
         {
@@ -2191,7 +2226,8 @@ amf0::Value ServMgr::getState()
             {"numIncoming", to_string(numActive(Servent::T_INCOMING))},
             {"disabled", to_string(isDisabled)},
             {"serverPort1", to_string(serverHost.port)},
-            {"serverLocalIP",Host(sys->getInterfaceIPv4Address(), 0).str(false) },
+            {"serverLocalIP",servMgr->serverLocalIP.str() },
+            {"serverLocalIPv6",servMgr->serverLocalIPv6.str() },
             {"upgradeURL", this->downloadURL},
             {"allow", amf0::Value::object(
                     {
@@ -2240,6 +2276,7 @@ amf0::Value ServMgr::getState()
             {"configurationFile", sys->fromFilenameEncoding(peercastApp->getIniFilename())},
             {"preferredTheme", this->preferredTheme},
             {"accentColor", this->accentColor},
+            {"serverIPAddresses", servaddrs},
         });
 }
 

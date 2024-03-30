@@ -60,7 +60,7 @@ void ChanHit::init()
     rhost[0].init();
     rhost[1].init();
 
-    next = NULL;
+    next = nullptr;
 
     numListeners = 0;
     numRelays = 0;
@@ -127,8 +127,11 @@ void ChanHit::initLocal(
     memcpy(versionExPrefix, PCP_CLIENT_VERSION_EX_PREFIX, 2);
     versionExNumber = PCP_CLIENT_VERSION_EX_NUMBER;
 
-    rhost[0] = Host(host.ip, host.port);
-    rhost[1] = Host(sys->getInterfaceIPv4Address(), host.port);
+    rhost[0] = host;
+    if (ipv6)
+        rhost[1] = Host(servMgr->serverLocalIPv6, host.port);
+    else
+        rhost[1] = Host(servMgr->serverLocalIP, host.port);
 
     if (firewalled)
         rhost[0].port = 0;
@@ -346,7 +349,7 @@ std::shared_ptr<ChanHit> ChanHitList::addHit(ChanHit &h)
 
     // dont add our own hits
     if (servMgr->sessionID.isSame(h.sessionID))
-        return NULL;
+        return nullptr;
 
     lastHitTime = sys->getTime();
     h.time = lastHitTime;
@@ -396,7 +399,7 @@ std::shared_ptr<ChanHit> ChanHitList::addHit(ChanHit &h)
         return ch;
     }
 
-    return NULL;
+    return nullptr;
 }
 
 // -----------------------------------

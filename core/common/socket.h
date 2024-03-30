@@ -49,6 +49,10 @@ public:
     virtual std::shared_ptr<ClientSocket> accept()          = 0;
     virtual Host            getLocalHost()     = 0;
 
+    virtual void setReuse(bool) { throw NotImplementedException(__func__); }
+    virtual void setNagle(bool) { throw NotImplementedException(__func__); }
+    virtual void setLinger(int) { throw NotImplementedException(__func__); }
+
     void    setReadTimeout(unsigned int t) override
     {
         readTimeout = t;
@@ -61,15 +65,14 @@ public:
 
     static unsigned int getIP(const char *);
 
-    // IPアドレスipを逆引きして名前をstrに格納する。
-    // strは最低256バイトの長さを持つ領域へのポインターでなければならない。
-    // 逆引きに成功した場合はtrueを、失敗した場合はfalseを返す。
-    static bool         getHostname(char * str, unsigned int ip);
-
     bool eof() override
     {
         return active()==false;
     }
+
+    virtual int getDescriptor() const { throw NotImplementedException(__func__); }
+    virtual void detach() { throw NotImplementedException(__func__); }
+    virtual char peekChar() { throw NotImplementedException(__func__); }
 
     Host            host;
 

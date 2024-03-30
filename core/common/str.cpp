@@ -6,6 +6,8 @@
 #include <cctype>
 #include <stdexcept>
 
+#include "common.h" // FormatException
+
 namespace str
 {
 
@@ -204,6 +206,12 @@ std::vector<std::string> split(const std::string& in, const std::string& separat
 std::string codepoint_to_utf8(uint32_t codepoint)
 {
     std::string res;
+
+    if (codepoint >= 0x110000) {
+        auto message = str::format("Codepoint U+%04lX out of valid range [U+0000, U+10FFFF]", static_cast<unsigned long>(codepoint));
+        throw std::out_of_range(message);
+    }
+
     if (/* codepoint >= 0 && */ codepoint <= 0x7f) {
         res += (char) codepoint;
     } else if (codepoint >= 0x80 && codepoint <= 0x7ff) {
@@ -213,21 +221,8 @@ std::string codepoint_to_utf8(uint32_t codepoint)
         res += (char) (0xe0 | (codepoint >> 12));
         res += (char) (0x80 | ((codepoint >> 6) & 0x3f));
         res += (char) (0x80 | (codepoint & 0x3f));
-    } else if (codepoint >= 0x10000 && codepoint <= 0x1fffff) {
+    } else { /* if (codepoint >= 0x10000  && codepoint <= 0x10ffff) */
         res += (char) (0xf0 | (codepoint >> 18));
-        res += (char) (0x80 | ((codepoint >> 12) & 0x3f));
-        res += (char) (0x80 | ((codepoint >> 6) & 0x3f));
-        res += (char) (0x80 | (codepoint & 0x3f));
-    } else if (codepoint >= 0x200000 && codepoint <= 0x3ffffff) {
-        res += (char) (0xf8 | (codepoint >> 24));
-        res += (char) (0x80 | ((codepoint >> 18) & 0x3f));
-        res += (char) (0x80 | ((codepoint >> 12) & 0x3f));
-        res += (char) (0x80 | ((codepoint >> 6) & 0x3f));
-        res += (char) (0x80 | (codepoint & 0x3f));
-    } else { // [0x4000000, 0x7fffffff]
-        res += (char) (0xfb | (codepoint >> 30));
-        res += (char) (0x80 | ((codepoint >> 24) & 0x3f));
-        res += (char) (0x80 | ((codepoint >> 18) & 0x3f));
         res += (char) (0x80 | ((codepoint >> 12) & 0x3f));
         res += (char) (0x80 | ((codepoint >> 6) & 0x3f));
         res += (char) (0x80 | (codepoint & 0x3f));
@@ -247,7 +242,7 @@ std::string format(const char* fmt, ...)
 
     va_start(ap, fmt);
     va_copy(aq, ap);
-    int size = vsnprintf(NULL, 0, fmt, ap);
+    int size = vsnprintf(nullptr, 0, fmt, ap);
     char *data = new char[size + 1];
     vsnprintf(data, size + 1, fmt, aq);
     va_end(aq);
@@ -264,7 +259,7 @@ std::string vformat(const char* fmt, va_list ap)
     std::string res;
 
     va_copy(aq, ap);
-    int size = vsnprintf(NULL, 0, fmt, ap);
+    int size = vsnprintf(nullptr, 0, fmt, ap);
     char *data = new char[size + 1];
     vsnprintf(data, size + 1, fmt, aq);
     va_end(aq);
@@ -632,6 +627,99 @@ std::string truncate_utf8(const std::string& str, size_t length)
 
 Error:
     throw std::invalid_argument("truncate_utf8: UTF-8 validation failed");
+}
+
+std::string valid_utf8(const std::string& bytes)
+{
+    if (str::validate_utf8(bytes))
+    {
+        return bytes;
+    } else {
+        std::string escaped;
+
+        for (auto it = bytes.begin(); it != bytes.end(); ++it)
+        {
+            if (*it < 0)
+                escaped += str::format("[%02X]", static_cast<unsigned char>(*it));
+            else
+                escaped += *it;
+        }
+        return escaped;
+    }
+}
+
+std::vector<std::string> shellwords(const std::string& str)
+{
+    std::vector<std::string> words;
+    std::string curr;
+    bool allowempty = false; // Allow to push an empty-string word because it's been quoted.
+
+    auto p = str.begin();
+    while (p != str.end()) {
+        if (*p == ' ' || *p == '\t' || *p == '\v') {
+            if (allowempty || curr != "") {
+                allowempty = false;
+                words.push_back(curr);
+                curr = "";
+            }
+            p++;
+            continue;
+        }
+        
+        if (*p == '\'') {
+            p++;
+            while (true) {
+                if (p == str.end()) {
+                    throw FormatException("Unterminated single-quoted string");
+                }
+                if (*p == '\'') {
+                    allowempty = true;
+                    break;
+                } else {
+                    curr += *p;
+                }
+                p++;
+            }
+        } else if (*p == '"') {
+            p++;
+            while (true) {
+                if (p == str.end()) {
+                    throw FormatException("Unterminated double-quoted string");
+                }
+                if (*p == '"') {
+                    allowempty = true;
+                    break;
+                } else if (*p == '\\') {
+                    p++;
+                    if (p == str.end()) {
+                        throw FormatException("Unfinished backlash escape");
+                    }
+                    if (*p != '\"' && *p != '\\') {
+                        curr += '\\';
+                    }
+                    curr += *p;
+                } else {
+                    curr += *p;
+                }
+                p++;
+            }
+        } else if (*p == '\\') {
+            p++;
+            if (p == str.end()) {
+                throw FormatException("Unfinished backlash escape");
+            }
+            curr += *p;
+        } else {
+            curr += *p;
+        }
+        p++;
+    }
+    
+    if (allowempty || curr != "") {
+        allowempty = false;
+        words.push_back(curr); // push last word
+    }
+    return words;
 }
 
 } // namespace str

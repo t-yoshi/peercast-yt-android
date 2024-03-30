@@ -89,7 +89,27 @@ void    USys::setThreadName(const char* name)
 #ifdef _GNU_SOURCE
     char buf[16];
     snprintf(buf, 16, "%s", name);
-    pthread_setname_np(pthread_self(), buf);
+    int err = pthread_setname_np(pthread_self(), buf);
+    if (err != 0) {
+        LOG_WARN("pthread_setname_np: err = %d", err);
+    }
+#endif
+}
+
+// ---------------------------------
+std::string USys::getThreadName()
+{
+#ifdef _GNU_SOURCE
+    char buf[16];
+    int err = pthread_getname_np(pthread_self(), buf, 16);
+    if (err != 0) {
+        LOG_WARN("pthread_getname_np: err = %d", err);
+        return "";
+    } else {
+        return buf;
+    }
+#else
+    return "";
 #endif
 }
 
@@ -114,6 +134,11 @@ std::string USys::getHostname()
 // --------------------------------------------------
 std::vector<std::string> USys::getIPAddresses(const std::string& name)
 {
+#ifndef NO_SERIALIZE_GETADDRINFO
+    static std::mutex getaddrinfo_lock;
+    std::lock_guard<std::mutex> cs(getaddrinfo_lock);
+#endif
+
     std::vector<std::string> addrs;
     struct addrinfo hints = {}, *result;
 
@@ -121,9 +146,9 @@ std::vector<std::string> USys::getIPAddresses(const std::string& name)
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
 
-    int err = getaddrinfo(name.c_str(), NULL, &hints, &result);
+    int err = getaddrinfo(name.c_str(), nullptr, &hints, &result);
     if (err) {
-        throw GeneralException("getaddrinfo", err);
+        throw GeneralException(str::format("getaddrinfo err = %d", err), err);
     }
 
     for (auto p = result; p; p = p->ai_next) {
@@ -154,11 +179,11 @@ std::vector<std::string> USys::getAllIPAddresses()
     if (!hostname.start({"-I"}, env)) {
         return {};
     }
-    Stream& pipe = hostname.inputStream();
+    auto pipe = hostname.inputStream();
     std::string buf;
     try {
-        while (!pipe.eof())
-            buf += pipe.readChar();
+        while (!pipe->eof())
+            buf += pipe->readChar();
     } catch (StreamException& e) {
     }
     while (isspace(buf[buf.size()-1]))
@@ -191,7 +216,7 @@ bool USys::getHostnameByAddress(const IP& ip, std::string& out)
                         sizeof(addr),
                         hbuf,
                         sizeof(hbuf),
-                        NULL,
+                        nullptr,
                         0,
                         NI_NAMEREQD)) {
             LOG_TRACE("getnameinfo: %s (%s)", gai_strerror(errcode), ip.str().c_str());
@@ -210,7 +235,7 @@ bool USys::getHostnameByAddress(const IP& ip, std::string& out)
                         sizeof(addr),
                         hbuf,
                         sizeof(hbuf),
-                        NULL,
+                        nullptr,
                         0,
                         NI_NAMEREQD)) {
             LOG_TRACE("getnameinfo: %s (%s)", gai_strerror(errcode), ip.str().c_str());
@@ -297,45 +322,19 @@ std::string USys::joinPath(const std::vector<std::string>& vec)
 }
 
 #ifndef __APPLE__
-
-// ---------------------------------
-void USys::getURL(const char *url)
-{
-}
+// Defining callLocalURL, executeFile, exit, getURL and openURL for non-Apple systems.
 
 // ---------------------------------
 void USys::callLocalURL(const char *str, int port)
 {
-    char* disp = getenv("DISPLAY");
-
     auto localURL = str::format("http://localhost:%d/%s", port, str);
-
-    if (disp == nullptr || disp[0] == '\0')
-    {
-        LOG_WARN("Ignoring openLocalURL request (no DISPLAY environment variable): %s", localURL.c_str());
-        return;
-    }
-
-    int retval;
-    std::string cmdLine = str::format("xdg-open %s", str::escapeshellarg_unix(localURL).c_str());
-    LOG_DEBUG("Calling system(%s)", str::inspect(cmdLine).c_str());
-    retval = system(cmdLine.c_str());
-    if (retval == -1)
-    {
-        LOG_ERROR("USys::callLocalURL: system(3) returned -1");;
-    }else if (!WIFEXITED(retval))
-    {
-        LOG_ERROR("Usys::callLocalURL: Shell terminated abnormally");
-    }else if (WEXITSTATUS(retval) != 0)
-    {
-        LOG_ERROR("Usys::callLocalURL: Shell exited with error status (%d)", WEXITSTATUS(retval));
-    }else
-        ; // Shell exited normally.
+    openURL(localURL.c_str());
 }
 
 // ---------------------------------
 void USys::executeFile( const char *file )
 {
+    openURL(file);
 }
 
 // ---------------------------------
@@ -344,24 +343,41 @@ void USys::exit()
     ::exit(0);
 }
 
-#else
+// ---------------------------------
+void USys::getURL(const char *url)
+{
+}
 
 // ---------------------------------
 void USys::openURL( const char* url )
 {
-    CFStringRef urlString = CFStringCreateWithFormat( NULL, NULL, CFSTR("%s"), url );
+    char* disp = getenv("DISPLAY");
 
-    if ( urlString )
+    if (disp == nullptr || disp[0] == '\0')
     {
-        CFURLRef pathRef = CFURLCreateWithString( NULL, urlString, NULL );
-        if ( pathRef )
-        {
-            OSStatus err = LSOpenCFURLRef( pathRef, NULL );
-            CFRelease(pathRef);
-        }
-        CFRelease( urlString );
+        LOG_WARN("%s: Ignoring request (no DISPLAY environment variable): %s", __func__, url);
+        return;
     }
+
+    int retval;
+    std::string cmdLine = str::format("xdg-open %s", str::escapeshellarg_unix(url).c_str());
+    LOG_DEBUG("%s: Calling system(%s)", __func__, str::inspect(cmdLine).c_str());
+    retval = system(cmdLine.c_str());
+    if (retval == -1)
+    {
+        LOG_ERROR("%s: system(3) returned -1", __func__);
+    }else if (!WIFEXITED(retval))
+    {
+        LOG_ERROR("%s: Shell terminated abnormally", __func__);
+    }else if (WEXITSTATUS(retval) != 0)
+    {
+        LOG_ERROR("%s: Shell exited with error status (%d)", __func__, WEXITSTATUS(retval));
+    }else
+        ; // Shell exited normally.
 }
+
+#else
+// Defining callLocalURL, executeFile, exit, getURL and openURL for Apple systems.
 
 // ---------------------------------
 void USys::callLocalURL(const char *str, int port)
@@ -372,27 +388,18 @@ void USys::callLocalURL(const char *str, int port)
 }
 
 // ---------------------------------
-void USys::getURL(const char *url)
-{
-    if (Sys::strnicmp(url, "http://", 7) || Sys::strnicmp(url, "mailto:", 7)) // XXX: ==0 が抜けてる？
-    {
-        openURL( url );
-    }
-}
-
-// ---------------------------------
 void USys::executeFile( const char *file )
 {
-    CFStringRef fileString = CFStringCreateWithFormat( NULL, NULL, CFSTR("%s"), file );
+    CFStringRef fileString = CFStringCreateWithFormat( nullptr, nullptr, CFSTR("%s"), file );
 
     if ( fileString )
     {
-        CFURLRef pathRef = CFURLCreateWithString( NULL, fileString, NULL );
+        CFURLRef pathRef = CFURLCreateWithString( nullptr, fileString, nullptr );
         if ( pathRef )
         {
             FSRef fsRef;
             CFURLGetFSRef( pathRef, &fsRef );
-            OSStatus err = LSOpenFSRef( &fsRef, NULL );
+            OSStatus err = LSOpenFSRef( &fsRef, nullptr );
             CFRelease(pathRef);
         }
         CFRelease( fileString );
@@ -407,6 +414,34 @@ void USys::exit()
 #else
     ::exit(0);
 #endif
+}
+
+// ---------------------------------
+void USys::getURL(const char *url)
+{
+    if (Sys::strnicmp(url, "http://", 7) == 0 ||
+        Sys::strnicmp(url, "https://", 8) == 0 ||
+        Sys::strnicmp(url, "mailto:", 7) == 0)
+    {
+        openURL( url );
+    }
+}
+
+// ---------------------------------
+void USys::openURL( const char* url )
+{
+    CFStringRef urlString = CFStringCreateWithFormat( nullptr, nullptr, CFSTR("%s"), url );
+
+    if ( urlString )
+    {
+        CFURLRef pathRef = CFURLCreateWithString( nullptr, urlString, nullptr );
+        if ( pathRef )
+        {
+            OSStatus err = LSOpenCFURLRef( pathRef, nullptr );
+            CFRelease(pathRef);
+        }
+        CFRelease( urlString );
+    }
 }
 
 #endif
@@ -429,4 +464,16 @@ void USys::rename(const std::string& oldpath, const std::string& newpath)
     if (::rename(oldpath.c_str(), newpath.c_str()) < 0) {
         throw GeneralException( str::format("rename: %s", str::strerror(errno).c_str()).c_str() );
     }
+}
+
+// ---------------------------------
+#include <unistd.h>
+std::string USys::getCurrentWorkingDirectory()
+{
+    char buf[PATH_MAX + 1];
+
+    if (getcwd(buf, PATH_MAX + 1) == 0) {
+        throw GeneralException("getcwd failed");
+    }
+    return buf;
 }

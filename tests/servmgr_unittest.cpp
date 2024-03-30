@@ -45,8 +45,6 @@ TEST_F(ServMgrFixture, initialState)
     ASSERT_STREQ("", m.rootMsg.cstr());
     // String              forceIP;
     ASSERT_STREQ("", m.forceIP.cstr());
-    // char                connectHost[128];
-    ASSERT_STREQ("connect1.peercast.org", m.connectHost);
     // GnuID               networkID;
     ASSERT_STREQ("00000000000000000000000000000000", m.networkID.str().c_str());
     // unsigned int        firewallTimeout;
@@ -492,4 +490,51 @@ TEST_F(ServMgrFixture, hasUnsafeFilterSettingsV6)
 
     m.filters[1].flags |= ServFilter::F_PRIVATE;
     ASSERT_TRUE(m.hasUnsafeFilterSettings());
+}
+
+
+#include "mockchanmgr.h"
+
+TEST_F(ServMgrFixture, procConnectArgs_ip)
+{
+    ChanInfo info;
+    char str[] = "0123456789abcdef0123456789abcdef?ip=1.2.3.4:7144";
+    MockChanMgr *mock = new MockChanMgr();
+
+    auto tmp = chanMgr;
+    chanMgr = mock;
+
+    m.procConnectArgs(str, info);
+
+    ASSERT_STREQ(str, "0123456789abcdef0123456789abcdef");
+    ASSERT_EQ(info.id.str(), "0123456789ABCDEF0123456789ABCDEF");
+
+    ASSERT_EQ(mock->lastHitAdded.chanID.str(), "0123456789ABCDEF0123456789ABCDEF");
+    ASSERT_EQ(mock->lastHitAdded.host.str(), "1.2.3.4:7144");
+    ASSERT_FALSE(mock->lastHitAdded.tracker);
+
+    delete mock;
+    chanMgr = tmp;
+}
+
+TEST_F(ServMgrFixture, procConnectArgs_tip)
+{
+    ChanInfo info;
+    char str[] = "0123456789abcdef0123456789abcdef?tip=1.2.3.4:7144";
+    MockChanMgr *mock = new MockChanMgr();
+
+    auto tmp = chanMgr;
+    chanMgr = mock;
+
+    m.procConnectArgs(str, info);
+
+    ASSERT_STREQ(str, "0123456789abcdef0123456789abcdef");
+    ASSERT_EQ(info.id.str(), "0123456789ABCDEF0123456789ABCDEF");
+
+    ASSERT_EQ(mock->lastHitAdded.chanID.str(), "0123456789ABCDEF0123456789ABCDEF");
+    ASSERT_EQ(mock->lastHitAdded.host.str(), "1.2.3.4:7144");
+    ASSERT_TRUE(mock->lastHitAdded.tracker);
+
+    delete mock;
+    chanMgr = tmp;
 }

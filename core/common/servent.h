@@ -21,6 +21,8 @@
 #define _SERVENT_H
 
 // ----------------------------------
+#include <stdint.h>
+
 #include "socket.h"
 #include "sys.h"
 #include "channel.h"
@@ -55,6 +57,7 @@ public:
         T_DIRECT,           // Outgoing direct connection
         T_COUT,             // PCP out connection
         T_CIN,              // PCP in connection
+        T_COMMAND,
     };
 
     enum STATUS
@@ -102,6 +105,13 @@ public:
         DirectLimit,
         NotPlaying,
         Other,
+    };
+
+    enum class SupportStatus
+    {
+        Supported,
+        Unsupported,
+        Unknown,
     };
 
     static const char* denialReasonToName(StreamRequestDenialReason r)
@@ -205,7 +215,7 @@ public:
     void    handshakeLocalFile(const char *, HTTP& http);
     void    invokeCGIScript(HTTP &http, const char* fn);
 
-    static void handshakeOutgoingPCP(AtomStream &, Host &, GnuID &, String &, bool);
+    static void handshakeOutgoingPCP(AtomStream &, const Host &, GnuID &, String &, bool);
     static void handshakeIncomingPCP(AtomStream &, Host &, GnuID &, String &);
 
     void    processIncomingPCP(bool);
@@ -254,6 +264,8 @@ public:
     static bool isTerminationCandidate(ChanHit* hit);
 
     static void writeHeloAtom(AtomStream &atom, bool sendPort, bool sendPing, bool sendBCID, const GnuID& sessionID, uint16_t port, const GnuID& broadcastID);
+    static void setBroadcastIdChannelId(ChanInfo& info, const GnuID& broadcastID);
+    static SupportStatus continuationPacketSupportStatus(const std::string&);
 
     TYPE                type;
     std::atomic<STATUS> status;

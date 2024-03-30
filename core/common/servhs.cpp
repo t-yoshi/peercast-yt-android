@@ -35,6 +35,15 @@
 #include "uptest.h"
 #include "gnutella.h"
 
+#include "sstream.h"
+#include "defer.h"
+#include <assert.h>
+
+#include <queue>
+
+#include "chunker.h"
+#include "commands.h"
+
 using namespace std;
 
 static bool isDecimal(const std::string& str);
@@ -54,7 +63,7 @@ static void termArgs(char *str)
 const char *nextCGIarg(const char *cp, char *cmd, char *arg)
 {
     if (!*cp)
-        return NULL;
+        return nullptr;
 
     int cnt=0;
 
@@ -213,14 +222,17 @@ void Servent::invokeCGIScript(HTTP &http, const char* fn)
     Subprogram script(filePath);
 
     bool success = script.start({}, env);
+    int pid = -1;
     if (success)
-        LOG_DEBUG("script started (pid = %d)", script.pid());
-    else
+    {
+        pid = script.pid(); // wait した後は script.pid() がリセットされるので値を取っておく。
+        LOG_DEBUG("script started (pid = %d)", pid);
+    }else
     {
         LOG_ERROR("failed to start script `%s`", filePath.c_str());
         throw HTTPException(HTTP_SC_SERVERERROR, 500);
     }
-    Stream& stream = script.inputStream();
+    Stream& stream = *script.inputStream();
 
     HTTPHeaders headers;
     int statusCode = 200;
@@ -260,10 +272,10 @@ void Servent::invokeCGIScript(HTTP &http, const char* fn)
 
     if (!normal)
     {
-        LOG_ERROR("child process (PID %d) terminated abnormally", script.pid());
+        LOG_ERROR("child process (PID %d) terminated abnormally", pid);
     }else
     {
-        LOG_DEBUG("child process (PID %d) exited normally (status %d)", script.pid(), status);
+        LOG_DEBUG("child process (PID %d) exited normally (status %d)", pid, status);
     }
 }
 
@@ -349,8 +361,7 @@ void Servent::handshakeGET(HTTP &http)
                     if (match)
                     {
                         ChanInfo newInfo = c->info;
-                        newInfo.track.title.set(songArg, String::T_ESC);
-                        newInfo.track.title.convertTo(String::T_UNICODE);
+                        newInfo.track.title = cgi::unescape(songArg).c_str();
 
                         if (urlArg)
                             if (urlArg[0])
@@ -467,6 +478,96 @@ void Servent::handshakeGET(HTTP &http)
         {
             invokeCGIScript(http, fn);
         }
+    }else if (str::is_prefix_of("/cmd?", fn))
+    {
+        if (!isAllowed(ALLOW_HTML))
+            throw HTTPException(HTTP_SC_UNAVAILABLE, 503);
+
+        cgi::Query query(fn + strlen("/cmd?"));
+        auto q = query.get("q");
+        if (q == "")
+        {
+            throw HTTPException(HTTP_SC_BADREQUEST, 400, "q missing");
+        }else
+        {
+            if (handshakeAuth(http, fn))
+            {
+                this->type = T_COMMAND;
+
+                http.readHeaders();
+#if 1
+                // Use HTTP/1.0 without Content-Length.
+                http.writeResponseStatus("HTTP/1.0", 200);
+                http.writeResponseHeaders
+                    ({
+                        {"Content-Type", "text/plain; charset=utf-8"},
+                        {"Connection", "close"},
+                    });
+                auto& stdout = http;
+#else
+                // Use HTTP/1.1 with chunked encoding.
+                http.writeResponseStatus("HTTP/1.1" /* important */, 200);
+                http.writeResponseHeaders
+                    ({
+                        {"Transfer-Encoding", "chunked"},
+                        {"Content-Type", "text/plain; charset=utf-8"},
+                        {"Connection", "close"},
+                    });
+
+                Chunker stdout(http);
+                Defer defer([&]() {
+                                try {
+                                    // Finalize the stream by sending the end-of-stream marker.
+                                    stdout.close();
+                                } catch (GeneralException&) {
+                                    // We don't want to throw here if the underlying socket is closed.
+                                }
+                            });
+#endif
+
+                try {
+                    auto cancellationRequested = [&]() -> bool { return !(thread.active() && sock->active()); };
+                    Commands::system(stdout, q, cancellationRequested);
+                } catch (GeneralException& e)
+                {
+                    LOG_ERROR("Error: cmd '%s': %s", query.get("q").c_str(), e.msg);
+                }
+            }
+        }
+#if 0
+    }else if (strcmp("/speedtest", fn) == 0)
+    {
+        //getSpeedTest();
+        
+        http.readHeaders();
+        http.writeLine("HTTP/1.1 200 OK");
+        http.writeLine("Content-Type: application/binary");
+        http.writeLine("Server: " PCX_AGENT);
+        http.writeLine("Connection: close");
+        http.writeLine("Transfer-Encoding: chunked");
+        http.writeLine("");
+
+        auto generateRandomBytes = [](size_t size) -> std::string {
+                                       std::string buf;
+                                       peercast::Random r;
+
+                                       for (size_t i = 0; i < size; ++i)
+                                           buf += (char) (r.next() & 0xff);
+                                       return buf;
+                                   };
+        auto block = generateRandomBytes(1024);
+        const auto startTime = sys->getDTime();
+        size_t sent = 0;
+        Chunker stream(http);
+
+        while (sys->getDTime() - startTime < 15.0) {
+            stream.write(block.data(), block.size());
+            sent += 1024;
+        }
+        auto t = sys->getDTime();
+        stream.close();
+        LOG_INFO("[Speedtest] client %s downloaded at %.0f bps", sock->host.ip.str().c_str(), (sent * 8) / (t - startTime));
+#endif
     }else
     {
         // GET マッチなし
@@ -479,10 +580,10 @@ void Servent::handshakeGET(HTTP &http)
 }
 
 // -----------------------------------
+#include "dechunker.h"
+#include <limits>
 void Servent::handshakePOST(HTTP &http)
 {
-    LOG_DEBUG("cmdLine: %s", http.cmdLine);
-
     auto vec = str::split(http.cmdLine, " ");
     if (vec.size() != 3)
         throw HTTPException(HTTP_SC_BADREQUEST, 400);
@@ -524,6 +625,60 @@ void Servent::handshakePOST(HTTP &http)
         auto req = http.getRequest();
         LOG_DEBUG("Admin (POST)");
         handshakeCMD(http, req.body);
+#if 0
+    }else if (path == "/speedtest")
+    {
+        // postSpeedtest();
+        http.readHeaders();
+
+        std::shared_ptr<Stream> stream;
+        if (http.headers.get("Transfer-Encoding") == "chunked") {
+            stream = std::make_shared<Dechunker>(http);
+        } else {
+            auto tmp = std::make_shared<IndirectStream>();
+            tmp->init(&http);
+            stream = tmp;
+        }
+
+        int remaining = std::numeric_limits<int>::max();
+        bool bounded = false;
+        if (http.headers.get("Content-Length") != "") {
+            remaining = std::atoi(http.headers.get("Content-Length").c_str());
+            bounded = true;
+        }
+
+        const auto startTime = sys->getDTime();
+        size_t received = 0;
+        char buffer[1024];
+
+        while (sys->getDTime() - startTime <= 20.0 && remaining > 0) {
+            int r;
+            try {
+                r = stream->read(buffer, std::min(1024, remaining));
+            } catch (StreamException& e) {
+                break;
+            }
+            received += r;
+            if (bounded)
+                remaining -= r;
+        }
+        auto t = sys->getDTime();
+
+        if ((t - startTime) < 15.0) {
+            auto res = HTTPResponse::badRequest("Time less than 15 seconds. Need more data.");
+            http.send(res);
+        } else {
+            double bps = (received * 8) / (t - startTime);
+            LOG_INFO("[Speedtest] client %s uploaded %d bytes in %.3f seconds (%.0f bps)",
+                     sock->host.ip.str().c_str(),
+                     (int) received,
+                     t - startTime,
+                     (received * 8) / (t - startTime));
+
+            auto res = HTTPResponse::ok({{"Content-Type", "text/plain"}}, str::format("%.0f bps", bps));
+            http.send(res);
+        }
+#endif
     }else
     {
         http.readHeaders();
@@ -577,14 +732,14 @@ void Servent::handshakeGIV(const char *requestLine)
             throw HTTPException(HTTP_SC_UNAVAILABLE, 503);
 
         LOG_DEBUG("Accepted GIV channel %s from: %s", idstr, ipstr);
-        sock = NULL;                  // release this servent but dont close socket.
+        sock = nullptr;                  // release this servent but dont close socket.
     }else
     {
         if (!servMgr->acceptGIV(sock))
             throw HTTPException(HTTP_SC_UNAVAILABLE, 503);
 
         LOG_DEBUG("Accepted GIV PCP from: %s", ipstr);
-        sock = NULL;                  // release this servent but dont close socket.
+        sock = nullptr;                  // release this servent but dont close socket.
     }
 }
 
@@ -594,7 +749,7 @@ void Servent::handshakeSOURCE(char * in, bool isHTTP)
     if (!isAllowed(ALLOW_BROADCAST))
         throw HTTPException(HTTP_SC_UNAVAILABLE, 503);
 
-    char *mount = NULL;
+    char *mount = nullptr;
 
     char *ps;
     if ((ps = strstr(in, "ICE/1.0")) != nullptr)
@@ -619,12 +774,14 @@ void Servent::handshakeSOURCE(char * in, bool isHTTP)
         loginMount.set(mount);
 
     handshakeICY(Channel::SRC_ICECAST, isHTTP);
-    sock = NULL;    // socket is taken over by channel, so don`t close it
+    sock = nullptr;    // socket is taken over by channel, so don`t close it
 }
 
 // -----------------------------------
 void Servent::handshakeHTTP(HTTP &http, bool isHTTP)
 {
+    LOG_DEBUG("%s \"%s\"", sock->host.ip.str().c_str(), http.cmdLine);
+
     if (http.isRequest("GET /"))
     {
         handshakeGET(http);
@@ -664,7 +821,7 @@ void Servent::handshakeHTTP(HTTP &http, bool isHTTP)
         LOG_DEBUG("ShoutCast client");
 
         handshakeICY(Channel::SRC_SHOUTCAST, isHTTP);
-        sock = NULL;    // socket is taken over by channel, so don`t close it
+        sock = nullptr;    // socket is taken over by channel, so don`t close it
     }else
     {
         // リクエスト解釈失敗
@@ -674,9 +831,20 @@ void Servent::handshakeHTTP(HTTP &http, bool isHTTP)
 }
 
 // -----------------------------------
+#include "sslclientsocket.h"
 void Servent::handshakeIncoming()
 {
     setStatus(S_HANDSHAKE);
+
+    if (servMgr->flags.get("enableSSLServer")) {
+        if (sock->readReady(sock->readTimeout)) {
+            char c = sock->peekChar();
+            LOG_TRACE("peekChar -> %d", (unsigned char) c);
+            if (c == 22) { // SSL handshake detected.
+                sock = SslClientSocket::upgrade(sock);
+            }
+        }
+    }
 
     char buf[8192];
 
@@ -685,7 +853,7 @@ void Servent::handshakeIncoming()
         throw HTTPException(HTTP_SC_URITOOLONG, 414);
     }
 
-    bool isHTTP = (stristr(buf, HTTP_PROTO1) != NULL);
+    bool isHTTP = (stristr(buf, HTTP_PROTO1) != nullptr);
 
     if (isHTTP)
         LOG_TRACE("HTTP from %s '%s'", sock->host.str().c_str(), buf);
@@ -899,10 +1067,6 @@ bool Servent::handshakeAuth(HTTP &http, const char *args)
 }
 
 // -----------------------------------
-#include "sstream.h"
-#include "defer.h"
-#include <assert.h>
-
 static std::string runProcess(std::function<void(Stream&)> action)
 {
     StringStream ss;
@@ -920,7 +1084,7 @@ static std::string runProcess(std::function<void(Stream&)> action)
 
         action(ss);
     } catch(GeneralException& e) {
-        ss.writeLineF("Error: %s\n", e.what());
+        ss.writeLineF("Error: %s", e.what());
     }
     return ss.str();
 }
@@ -1123,15 +1287,11 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
             strcat(servMgr->htmlPath, arg);
         }else if (strcmp(curr, "djmsg") == 0)
         {
-            String msg;
-            msg.set(arg, String::T_ESC);
-            msg.convertTo(String::T_UNICODE);
-            chanMgr->setBroadcastMsg(msg);
+            chanMgr->setBroadcastMsg(cgi::unescape(arg).c_str());
         }
         else if (strcmp(curr, "pcmsg") == 0)
         {
-            servMgr->rootMsg.set(arg, String::T_ESC);
-            servMgr->rootMsg.convertTo(String::T_UNICODE);
+            servMgr->rootMsg = cgi::unescape(arg).c_str();
         }
 
         // connections
@@ -1154,8 +1314,7 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
 
             if (strncmp(fs, "ip", 2) == 0)        // ip must be first
             {
-                String str(arg, String::T_ESC);
-                str.convertTo(String::T_ASCII);
+                auto str = cgi::unescape(arg);
 
                 currFilter = &servMgr->filters[servMgr->numFilters];
                 currFilter->init();
@@ -1178,9 +1337,7 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
         {
             if (strcmp(arg, "") != 0)
             {
-                String str(arg, String::T_ESC);
-                str.convertTo(String::T_ASCII);
-                servMgr->channelDirectory->addFeed(str.cstr());
+                servMgr->channelDirectory->addFeed(cgi::unescape(arg).c_str());
             }
         }
 
@@ -1189,9 +1346,13 @@ void Servent::CMD_apply(const char* cmd, HTTP& http, String& jumpStr)
             servMgr->autoConnect = getCGIargBOOL(arg);
         else if (strcmp(curr, "yp") == 0)
         {
-            String str(arg, String::T_ESC);
-            str.convertTo(String::T_ASCII);
-            servMgr->rootHost = str;
+            auto val = cgi::unescape(arg);
+            if (val != servMgr->rootHost.cstr())
+            {
+                LOG_INFO("Root host changed from '%s' to '%s'", servMgr->rootHost.cstr(), val.c_str());
+                servMgr->rootHost = val.c_str();
+                servMgr->rootMsg = "";
+            }
         }
         else if (strcmp(curr, "deadhitage") == 0)
             chanMgr->deadHitAge = getCGIargINT(arg);
@@ -1291,7 +1452,7 @@ void Servent::CMD_applyflags(const char* cmd, HTTP& http, String& jumpStr)
     });
 
     peercastInst->saveSettings();
-    peercast::notifyMessage(ServMgr::NT_PEERCAST, "設定を保存しました。");
+    peercast::notifyMessage(ServMgr::NT_PEERCAST, "フラグ設定を保存しました。");
     peercastApp->updateSettings();
 
     jumpStr.sprintf("/%s/flags.html", servMgr->htmlPath);
@@ -1303,27 +1464,19 @@ void Servent::CMD_fetch(const char* cmd, HTTP& http, String& jumpStr)
     ChanInfo info;
 
     auto curl = query.get("url");
-    info.name = query.get("name");
-    info.desc = query.get("desc");
-    info.genre = query.get("genre");
-    info.url = query.get("contact");
+    info.name  = str::truncate_utf8(str::valid_utf8(query.get("name")), 255);
+    info.desc  = str::truncate_utf8(str::valid_utf8(query.get("desc")), 255);
+    info.genre = str::truncate_utf8(str::valid_utf8(query.get("genre")), 255);
+    info.url   = str::truncate_utf8(str::valid_utf8(query.get("contact")), 255);
     info.bitrate = atoi(query.get("bitrate").c_str());
     auto type = query.get("type");
-    info.contentType = type;
-    info.MIMEType = ChanInfo::getMIMEType(type.c_str());
-    info.streamExt = ChanInfo::getTypeExt(type.c_str());
-    info.bcID = chanMgr->broadcastID;
+    info.setContentType(type.c_str());
 
     // id がセットされていないチャンネルがあるといろいろまずいので、事
     // 前に設定してから登録する。
-    if (servMgr->flags.get("randomizeBroadcastingChannelID")) {
-        info.id = GnuID::random();
-    } else {
-        info.id = chanMgr->broadcastID;
-        info.id.encode(NULL, info.name, info.genre, info.bitrate);
-    }
+    setBroadcastIdChannelId(info, chanMgr->broadcastID);
 
-    auto c = chanMgr->createChannel(info, NULL);
+    auto c = chanMgr->createChannel(info);
     if (c) {
         if (query.get("ipv") == "6") {
             c->ipVersion = Channel::IP_V6;
@@ -1364,7 +1517,11 @@ void Servent::CMD_stop_servent(const char* cmd, HTTP& http, String& jumpStr)
     if (s)
     {
         s->abort();
-        jumpStr.sprintf("/%s/connections.html", servMgr->htmlPath);
+
+        if (!http.headers.get("Referer").empty())
+            jumpStr.sprintf("%s", http.headers.get("Referer").c_str());
+        else
+            jumpStr.sprintf("/%s/connections.html", servMgr->htmlPath);
         return;
     }else
     {
@@ -1569,11 +1726,11 @@ void Servent::CMD_control_rtmp(const char* cmd, HTTP& http, String& jumpStr)
 
             servMgr->rtmpPort = port;
 
-            info.name    = query.get("name").c_str();
-            info.genre   = query.get("genre").c_str();
-            info.desc    = query.get("desc").c_str();
-            info.url     = query.get("url").c_str();
-            info.comment = query.get("comment").c_str();
+            info.name    = str::truncate_utf8(str::valid_utf8(query.get("name")), 255);
+            info.genre   = str::truncate_utf8(str::valid_utf8(query.get("genre")), 255);
+            info.desc    = str::truncate_utf8(str::valid_utf8(query.get("desc")), 255);
+            info.url     = str::truncate_utf8(str::valid_utf8(query.get("url")), 255);
+            info.comment = str::truncate_utf8(str::valid_utf8(query.get("comment")), 255);
         }
 
         servMgr->rtmpServerMonitor.ipVersion = (query.get("ipv") == "6") ? 6 : 4;
@@ -1597,28 +1754,30 @@ void Servent::CMD_update_channel_info(const char* cmd, HTTP& http, String& jumpS
 
     GnuID id(query.get("id"));
     auto ch = chanMgr->findChannelByID(id);
-    if (ch == NULL)
-        throw HTTPException(HTTP_SC_SERVERERROR, 500);
+    if (ch == nullptr)
+        throw HTTPException(HTTP_SC_SERVERERROR, 500, "No such channel");
 
     // I don't think this operation is safe
 
     ChanInfo info = ch->info;
 
-    info.name    = query.get("name").c_str();
-    info.desc    = query.get("desc").c_str();
-    info.genre   = query.get("genre").c_str();
-    info.url     = query.get("contactURL").c_str();
-    info.comment = query.get("comment").c_str();
+    info.name    = str::truncate_utf8(str::valid_utf8(query.get("name")), 255);
+    info.desc    = str::truncate_utf8(str::valid_utf8(query.get("desc")), 255);
+    info.genre   = str::truncate_utf8(str::valid_utf8(query.get("genre")), 255);
+    info.url     = str::truncate_utf8(str::valid_utf8(query.get("contactURL")), 255);
+    info.comment = str::truncate_utf8(str::valid_utf8(query.get("comment")), 255);
 
-    info.track.contact = query.get("track.contactURL").c_str();
-    info.track.title   = query.get("track.title").c_str();
-    info.track.artist  = query.get("track.artist").c_str();
-    info.track.album   = query.get("track.album").c_str();
-    info.track.genre   = query.get("track.genre").c_str();
+    info.track.contact = str::truncate_utf8(str::valid_utf8(query.get("track.contactURL")), 255);
+    info.track.title   = str::truncate_utf8(str::valid_utf8(query.get("track.title")), 255);
+    info.track.artist  = str::truncate_utf8(str::valid_utf8(query.get("track.artist")), 255);
+    info.track.album   = str::truncate_utf8(str::valid_utf8(query.get("track.album")), 255);
+    info.track.genre   = str::truncate_utf8(str::valid_utf8(query.get("track.genre")), 255);
 
-    ch->updateInfo(info);
+    bool changed = ch->updateInfo(info);
+    if (!changed)
+        throw HTTPException(HTTP_SC_SERVERERROR, 500, "Failed to update channel info");
 
-    jumpStr.sprintf("/%s/channels.html", servMgr->htmlPath);
+    jumpStr.sprintf("/%s/relays.html", servMgr->htmlPath);
 }
 
 static std::string dumpHit(std::shared_ptr<ChanHit> hit)
@@ -2029,11 +2188,8 @@ void Servent::handshakeCMD(HTTP& http, const std::string& query)
 
     if (jumpStr != "")
     {
-        String jmp(jumpStr, String::T_HTML);
-        jmp.convertTo(String::T_ASCII);
-
         http.writeLine(HTTP_SC_FOUND);
-        http.writeLineF("Location: %s", jmp.c_str());
+        http.writeLineF("Location: %s", jumpStr.c_str());
         http.writeLine("");
     }
 }
@@ -2146,7 +2302,7 @@ void Servent::readICYHeader(HTTP &http, ChanInfo &info, char *pwd, size_t plen)
 
     }else if (http.isHeader("Authorization")) {
         if (pwd)
-            http.getAuthUserPass(NULL, pwd, 0, plen);
+            http.getAuthUserPass(nullptr, pwd, 0, plen);
     }
     else if (http.isHeader(PCX_HS_CHANNELID))
         info.id.fromStr(arg);
@@ -2261,12 +2417,7 @@ void Servent::handshakeWMHTTPPush(HTTP& http, const std::string& path)
     if (vec.size() > 2) info.desc  = vec[2];
     if (vec.size() > 3) info.url   = vec[3];
 
-    if (servMgr->flags.get("randomizeBroadcastingChannelID")) {
-        info.id = GnuID::random();
-    } else {
-        info.id = chanMgr->broadcastID;
-        info.id.encode(NULL, info.name.cstr(), info.genre.cstr(), info.bitrate);
-    }
+    setBroadcastIdChannelId(info, chanMgr->broadcastID);
 
     auto c = chanMgr->findChannelByID(info.id);
     if (c)
@@ -2276,14 +2427,31 @@ void Servent::handshakeWMHTTPPush(HTTP& http, const std::string& path)
     }
 
     info.comment = chanMgr->broadcastMsg;
-    info.bcID    = chanMgr->broadcastID;
 
-    c = chanMgr->createChannel(info, NULL);
+    c = chanMgr->createChannel(info);
     if (!c)
         throw HTTPException(HTTP_SC_SERVERERROR, 500);
 
     c->startWMHTTPPush(sock);
-    sock = NULL;    // socket is taken over by channel, so don`t close it
+    sock = nullptr;    // socket is taken over by channel, so don`t close it
+}
+
+// -----------------------------------
+void Servent::setBroadcastIdChannelId(ChanInfo& info, const GnuID& broadcastID)
+{
+    // ブロードキャストIDをセットし、info にセットされたチャンネル名、
+    // ジャンル、ビットレートからチャンネルIDを設定する。ただし、チャ
+    // ンネルIDランダム化フラグがセットされていた場合はランダムなチャ
+    // ンネルIDをセットする。
+
+    info.bcID = broadcastID;
+
+    if (servMgr->flags.get("randomizeBroadcastingChannelID")) {
+        info.id = GnuID::random();
+    } else {
+        info.id = broadcastID;
+        info.id.encode(nullptr, info.name, info.genre, info.bitrate);
+    }
 }
 
 // -----------------------------------
@@ -2304,13 +2472,7 @@ ChanInfo Servent::createChannelInfo(GnuID broadcastID, const String& broadcastMs
     info.bitrate = atoi(query.get("bitrate").c_str());
     info.comment = query.get("comment").empty() ? broadcastMsg : query.get("comment");
 
-    if (servMgr->flags.get("randomizeBroadcastingChannelID")) {
-        info.id = GnuID::random();
-    } else {
-        info.id = broadcastID;
-        info.id.encode(NULL, info.name.cstr(), info.genre.cstr(), info.bitrate);
-    }
-    info.bcID = broadcastID;
+    setBroadcastIdChannelId(info, broadcastID);
 
     return info;
 }
@@ -2343,7 +2505,7 @@ void Servent::handshakeHTTPPush(const std::string& args)
     }
     // ここでシャットダウン待たなくていいの？
 
-    c = chanMgr->createChannel(info, NULL);
+    c = chanMgr->createChannel(info);
     if (!c)
         throw HTTPException(HTTP_SC_UNAVAILABLE, 503);
 
@@ -2356,7 +2518,7 @@ void Servent::handshakeHTTPPush(const std::string& args)
         servMgr->checkFirewallIPv6();
     }
     c->startHTTPPush(sock, chunked);
-    sock = NULL;    // socket is taken over by channel, so don`t close it
+    sock = nullptr;    // socket is taken over by channel, so don`t close it
 }
 
 // -----------------------------------
@@ -2393,7 +2555,7 @@ void Servent::handshakeICY(Channel::SRC_TYPE type, bool isHTTP)
         info.id = GnuID::random();
     } else {
         info.id = chanMgr->broadcastID;
-        info.id.encode(NULL, info.name.cstr(), loginMount.cstr(), info.bitrate);
+        info.id.encode(nullptr, info.name.cstr(), loginMount.cstr(), info.bitrate);
     }
 
     LOG_DEBUG("Incoming source: %s : %s", info.name.cstr(), info.getTypeStr());
@@ -2558,4 +2720,3 @@ void Servent::handshakeLocalFile(const char *fn, HTTP& http)
         html.writeRawFile(fileName.cstr(), mimeType);
     }
 }
-

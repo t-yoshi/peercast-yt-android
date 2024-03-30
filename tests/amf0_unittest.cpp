@@ -3,6 +3,9 @@
 
 #include <gtest/gtest.h>
 
+#include <limits> // numeric_limits
+#include <string> // stod
+
 using namespace amf0;
 
 class amf0Fixture : public ::testing::Test {
@@ -228,6 +231,55 @@ TEST_F(amf0Fixture, serialize_Date)
     ASSERT_EQ(Value::date(12, 34), Deserializer().readValue(mem));
 }
 
+TEST_F(amf0Fixture, Array_ctor_initializer_list)
+{
+    Value arr = Value::array({ { "a", 1 }, {"b", "2"} });
+
+    ASSERT_TRUE(arr.isArray());
+    ASSERT_FALSE(arr.isStrictArray());
+
+    ASSERT_EQ(arr.object().size(), 2);
+}
+
+TEST_F(amf0Fixture, Array_ctor_vector)
+{
+    std::vector<amf0::KeyValuePair> v = { { "a", 1 }, {"b", "2"} };
+    Value arr = Value::array(v);
+    
+    ASSERT_TRUE(arr.isArray());
+    ASSERT_FALSE(arr.isStrictArray());
+
+    ASSERT_EQ(arr.object().size(), 2);
+}
+
+TEST_F(amf0Fixture, Array_size)
+{
+    Value arr = Value::array({ { "a", 1 }, {"b", "2"} });
+    ASSERT_EQ(arr.object().size(), 2);
+}
+
+TEST_F(amf0Fixture, Array_at)
+{
+    Value arr = Value::array({ { "a", 1 }, {"b", "2"} });
+
+    ASSERT_NO_THROW(arr.at("a"));
+    ASSERT_THROW(arr.at("z"), std::out_of_range);
+
+    ASSERT_EQ(arr.at("a"), 1);
+    ASSERT_EQ(arr.at("b"), "2");
+    ASSERT_NE(arr.at("b"), 2);
+}
+
+TEST_F(amf0Fixture, Array_count)
+{
+    Value v = Value::array({ {"name","joe"} });
+
+    ASSERT_TRUE(v.isArray());
+    ASSERT_FALSE(v.isObject());
+    ASSERT_EQ(v.count("name"), 1);
+    ASSERT_EQ(v.count("age"), 0);
+}
+
 TEST_F(amf0Fixture, Object_at)
 {
     Value v({ {"name","joe"} });
@@ -286,4 +338,29 @@ TEST_F(amf0Fixture, Null_at_size_count)
     ASSERT_THROW(v.at("a"), std::runtime_error);
     ASSERT_THROW(v.count("a"), std::runtime_error);
     ASSERT_THROW(v.size(), std::runtime_error);
+}
+
+TEST_F(amf0Fixture, Number_inspect)
+{
+    ASSERT_EQ(amf0::Value::number(0.0).inspect(), "0");
+    ASSERT_EQ(amf0::Value::number(-0.0).inspect(), "-0");
+    ASSERT_EQ(amf0::Value::number(1705328958.0).inspect(), "1705328958");
+}
+
+// double-string-double
+TEST_F(amf0Fixture, Number_precision)
+{
+    std::vector<double> vs = {
+        0.0,
+        -0.0,
+        1.0,
+        1.0/7.0,
+        std::numeric_limits<double>::max(),
+        std::numeric_limits<double>::min(),
+        std::numeric_limits<double>::lowest(),
+    };
+    for (int i = 0; i < vs.size(); i++) {
+        double v = vs[i];
+        ASSERT_EQ(std::stod(amf0::Value::number(v).inspect()), v);
+    }
 }

@@ -19,8 +19,9 @@
 #ifndef _FLV_H
 #define _FLV_H
 
-#include "stdio.h"
 #include <stdexcept>
+#include <stdint.h>
+#include <string.h> // memcpy
 
 #include "channel.h"
 
@@ -63,8 +64,8 @@ public:
         size = 0;
         packetSize = 0;
         type = T_UNKNOWN;
-        data = NULL;
-        packet = NULL;
+        data = nullptr;
+        packet = nullptr;
     }
 
     ~FLVTag()
@@ -85,7 +86,7 @@ public:
             packet = new unsigned char[other.packetSize];
             memcpy(packet, other.packet, other.packetSize);
         } else
-            packet = NULL;
+            packet = nullptr;
 
         if (packet)
             data = packet + 11;
@@ -103,7 +104,7 @@ public:
             packet = new unsigned char[other.packetSize];
             memcpy(packet, other.packet, other.packetSize);
         } else
-            packet = NULL;
+            packet = nullptr;
 
         if (packet)
             data = packet + 11;
@@ -111,7 +112,7 @@ public:
 
     void read(Stream &in)
     {
-        if (packet != NULL)
+        if (packet != nullptr)
             delete [] packet;
 
         unsigned char binary[11];

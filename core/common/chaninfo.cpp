@@ -21,6 +21,7 @@
 #include "pcp.h"
 #include "chanmgr.h"
 #include "playlist.h"
+#include "cgi.h"
 
 const ::String ChanInfo::T_UNKNOWN = "UNKNOWN";
 const ::String ChanInfo::T_RAW = "RAW";
@@ -38,18 +39,6 @@ const ::String ChanInfo::T_WMA = "WMA";
 const ::String ChanInfo::T_WMV = "WMV";
 const ::String ChanInfo::T_PLS = "PLS";
 const ::String ChanInfo::T_ASX = "ASX";
-
-// -----------------------------------
-static void readXMLString(String &str, XML::Node *n, const char *arg)
-{
-    char *p;
-    p = n->findAttr(arg);
-    if (p)
-    {
-        str.set(p, String::T_HTML);
-        str.convertTo(String::T_ASCII);
-    }
-}
 
 // -----------------------------------
 const char *ChanInfo::getTypeStr()
@@ -110,6 +99,7 @@ const char *ChanInfo::getProtocolStr(PROTOCOL t)
         case SP_PCP: return "PCP";
         case SP_WMHTTP: return "WMHTTP";
         case SP_RTMP: return "RTMP";
+        case SP_PIPE: return "PIPE";
         default: return "UNKNOWN";
     }
 }
@@ -440,17 +430,6 @@ void ChanInfo::init()
 }
 
 // -----------------------------------
-void ChanInfo::readTrackXML(XML::Node *n)
-{
-    track.clear();
-    readXMLString(track.title, n, "title");
-    readXMLString(track.contact, n, "contact");
-    readXMLString(track.artist, n, "artist");
-    readXMLString(track.album, n, "album");
-    readXMLString(track.genre, n, "genre");
-}
-
-// -----------------------------------
 unsigned int ChanInfo::getUptime()
 {
     // calculate uptime and cap if requested by settings.
@@ -578,8 +557,7 @@ XML::Node *ChanInfo::createChannelXML()
     String descUNI = desc;
     descUNI.convertTo(String::T_UNICODESAFE);
 
-    String commentUNI;
-    commentUNI = comment;
+    String commentUNI = comment;
     commentUNI.convertTo(String::T_UNICODESAFE);
 
     return new XML::Node("channel name=\"%s\" id=\"%s\" bitrate=\"%d\" type=\"%s\" genre=\"%s\" desc=\"%s\" url=\"%s\" uptime=\"%d\" comment=\"%s\" skips=\"%d\" age=\"%d\" bcflags=\"%d\"",
@@ -596,41 +574,6 @@ XML::Node *ChanInfo::createChannelXML()
         getAge(),
         bcID.getFlags()
         );
-}
-
-// -----------------------------------
-XML::Node *ChanInfo::createQueryXML()
-{
-    char buf[512];
-
-    String nameHTML = name;
-    nameHTML.convertTo(String::T_HTML);
-    String genreHTML = genre;
-    genreHTML.convertTo(String::T_HTML);
-
-    buf[0]=0;
-    if (!nameHTML.isEmpty())
-    {
-        strcat(buf, " name=\"");
-        strcat(buf, nameHTML.cstr());
-        strcat(buf, "\"");
-    }
-
-    if (!genreHTML.isEmpty())
-    {
-        strcat(buf, " genre=\"");
-        strcat(buf, genreHTML.cstr());
-        strcat(buf, "\"");
-    }
-
-    if (id.isSet())
-    {
-        strcat(buf, " id=\"");
-        strcat(buf, id.str().c_str());
-        strcat(buf, "\"");
-    }
-
-    return new XML::Node("channel %s", buf);
 }
 
 // -----------------------------------
@@ -672,44 +615,6 @@ XML::Node *ChanInfo::createTrackXML()
 }
 
 // -----------------------------------
-void ChanInfo::init(XML::Node *n)
-{
-    init();
-
-    updateFromXML(n);
-}
-
-// -----------------------------------
-void ChanInfo::updateFromXML(XML::Node *n)
-{
-    String typeStr, idStr;
-
-    readXMLString(name, n, "name");
-    readXMLString(genre, n, "genre");
-    readXMLString(url, n, "url");
-    readXMLString(desc, n, "desc");
-
-    int br = n->findAttrInt("bitrate");
-    if (br)
-        bitrate = br;
-
-    readXMLString(typeStr, n, "type");
-    if (!typeStr.isEmpty()) {
-        contentType = typeStr;
-    }
-
-    readXMLString(idStr, n, "id");
-    if (!idStr.isEmpty())
-        id.fromStr(idStr.cstr());
-
-    readXMLString(comment, n, "comment");
-
-    XML::Node *tn = n->findNode("track");
-    if (tn)
-        readTrackXML(tn);
-}
-
-// -----------------------------------
 void ChanInfo::init(const char *n, GnuID &cid, TYPE tp, int br)
 {
     init();
@@ -732,7 +637,7 @@ void ChanInfo::init(const char *fn)
 // -----------------------------------
 void ChanInfo::setContentType(TYPE type)
 {
-    this->contentType    = type;
+    this->contentType    = getTypeFromStr(type.cstr());
     this->MIMEType       = getMIMEType(type);
     this->streamExt      = getTypeExt(type);
 }

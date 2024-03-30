@@ -60,7 +60,7 @@ void ChanMgr::closeIdles()
 void ChanMgr::closeOldestIdle()
 {
     unsigned int idleTime = (unsigned int)-1;
-    std::shared_ptr<Channel> ch = channel, oldest = NULL;
+    std::shared_ptr<Channel> ch = channel, oldest = nullptr;
 
     while (ch)
     {
@@ -104,7 +104,7 @@ std::shared_ptr<Channel>ChanMgr::findChannelByNameID(ChanInfo &info)
                 return ch;
         ch = ch->next;
     }
-    return NULL;
+    return nullptr;
 }
 
 // -----------------------------------
@@ -119,7 +119,7 @@ std::shared_ptr<Channel>ChanMgr::findChannelByName(const char *n)
         ch = ch->next;
     }
 
-    return NULL;
+    return nullptr;
 }
 
 // -----------------------------------
@@ -137,7 +137,7 @@ std::shared_ptr<Channel> ChanMgr::findChannelByIndex(int index)
         }
         ch = ch->next;
     }
-    return NULL;
+    return nullptr;
 }
 
 // -----------------------------------
@@ -153,7 +153,7 @@ std::shared_ptr<Channel> ChanMgr::findChannelByMount(const char *str)
         ch = ch->next;
     }
 
-    return NULL;
+    return nullptr;
 }
 
 // -----------------------------------
@@ -168,7 +168,7 @@ std::shared_ptr<Channel> ChanMgr::findChannelByID(const GnuID &id)
                 return ch;
         ch = ch->next;
     }
-    return NULL;
+    return nullptr;
 }
 
 // -----------------------------------
@@ -212,14 +212,14 @@ int ChanMgr::findChannelsByStatus(std::shared_ptr<Channel> *chlist, int max, Cha
 // -----------------------------------
 std::shared_ptr<Channel> ChanMgr::createRelay(ChanInfo &info, bool stayConnected)
 {
-    auto c = chanMgr->createChannel(info, NULL);
+    auto c = chanMgr->createChannel(info);
     if (c)
     {
         c->stayConnected = stayConnected;
         c->startGet();
         return c;
     }
-    return NULL;
+    return nullptr;
 }
 
 // -----------------------------------
@@ -241,7 +241,7 @@ std::shared_ptr<Channel> ChanMgr::findAndRelay(ChanInfo &info)
 
     if (!c)
     {
-        c = chanMgr->createChannel(info, NULL);
+        c = chanMgr->createChannel(info);
         if (c)
         {
             c->setStatus(Channel::S_SEARCHING);
@@ -256,7 +256,7 @@ std::shared_ptr<Channel> ChanMgr::findAndRelay(ChanInfo &info)
         if (!c)
         {
             peercast::notifyMessage(ServMgr::NT_PEERCAST, "チャンネル "+chName(info)+" は見付かりませんでした。");
-            return NULL;
+            return nullptr;
         }
 
         // if (c->isPlaying() && (c->info.contentType != ChanInfo::T_UNKNOWN))
@@ -273,9 +273,9 @@ std::shared_ptr<Channel> ChanMgr::findAndRelay(ChanInfo &info)
 // -----------------------------------
 ChanMgr::ChanMgr()
 {
-    channel = NULL;
+    channel = nullptr;
 
-    hitlist = NULL;
+    hitlist = nullptr;
 
     currFindAndPlayChannel.clear();
 
@@ -368,7 +368,7 @@ void ChanMgr::setUpdateInterval(unsigned int v)
 }
 
 // -----------------------------------
-void ChanMgr::setBroadcastMsg(String &msg)
+void ChanMgr::setBroadcastMsg(const String &msg)
 {
     if (!msg.isSame(broadcastMsg))
     {
@@ -406,7 +406,7 @@ void ChanMgr::deleteChannel(std::shared_ptr<Channel> delchan)
 {
     std::lock_guard<std::recursive_mutex> cs(lock);
 
-    std::shared_ptr<Channel> ch = channel, prev = NULL;
+    std::shared_ptr<Channel> ch = channel, prev = nullptr;
 
     while (ch)
     {
@@ -444,6 +444,8 @@ std::shared_ptr<Channel> ChanMgr::createChannel(ChanInfo &info, const char *moun
     nc->type = Channel::T_ALLOCATED;
     nc->info.createdTime = sys->getTime();
 
+    nc->rootHost = servMgr->rootHost.c_str();
+
     LOG_INFO("New channel created");
 
     return nc;
@@ -478,7 +480,7 @@ std::shared_ptr<ChanHitList> ChanMgr::findHitList(ChanInfo &info)
 
         chl = chl->next;
     }
-    return NULL;
+    return nullptr;
 }
 
 // -----------------------------------
@@ -493,7 +495,7 @@ std::shared_ptr<ChanHitList> ChanMgr::findHitListByID(const GnuID &id)
                 return chl;
         chl = chl->next;
     }
-    return NULL;
+    return nullptr;
 }
 
 // -----------------------------------
@@ -629,6 +631,8 @@ void ChanMgr::addHit(Host &h, const GnuID &id, bool tracker)
     hit.host = h;
     hit.rhost[0] = h;
     hit.rhost[1].init();
+    if (!h.ip.isIPv4Mapped())
+        hit.rhost[1].ip = IP::parse("::");
     hit.tracker = tracker;
     hit.recv = true;
     hit.chanID = id;
@@ -653,7 +657,7 @@ std::shared_ptr<ChanHit> ChanMgr::addHit(ChanHit &h)
     {
         return hl->addHit(h);
     }else
-        return NULL;
+        return nullptr;
 }
 
 // -----------------------------------
@@ -709,10 +713,8 @@ void ChanMgr::findAndPlayChannel(ChanInfo &info, bool keep)
 // -----------------------------------
 void ChanMgr::playChannel(ChanInfo &info)
 {
-    char str[128], fname[256];
-
-    sprintf(str, "http://localhost:%d", servMgr->serverHost.port);
-
+    std::string str = str::format("http://localhost:%d", servMgr->serverHost.port);
+    std::string fname;
     PlayList::TYPE type;
 
     if ((info.contentType == ChanInfo::T_WMA) || (info.contentType == ChanInfo::T_WMV))
@@ -720,18 +722,18 @@ void ChanMgr::playChannel(ChanInfo &info)
         type = PlayList::T_ASX;
         // WMP seems to have a bug where it doesn`t re-read asx files if they have the same name
         // so we prepend the channel id to make it unique - NOTE: should be deleted afterwards.
-        snprintf(fname, sizeof(fname), "%s/%s.asx", peercastApp->getPath(), info.id.str().c_str());
+        fname = str::format("%s/%s.asx", peercastApp->getCacheDirPath(), info.id.str().c_str());
     }else if (info.contentType == ChanInfo::T_OGM)
     {
         type = PlayList::T_RAM;
-        snprintf(fname, sizeof(fname), "%s/play.ram", peercastApp->getPath());
+        fname = str::format("%s/play.ram", peercastApp->getCacheDirPath());
     }else
     {
         type = PlayList::T_SCPLS;
-        snprintf(fname, sizeof(fname), "%s/play.pls", peercastApp->getPath());
+        fname = str::format("%s/play.pls", peercastApp->getCacheDirPath());
     }
 
-    PlayList *pls = new PlayList(type, 1);
+    auto pls = std::make_shared<PlayList>(type, 1);
     pls->addChannel(str, info);
 
     LOG_DEBUG("Writing %s", sys->fromFilenameEncoding(fname).c_str());
@@ -742,7 +744,6 @@ void ChanMgr::playChannel(ChanInfo &info)
 
     LOG_DEBUG("Executing: %s", sys->fromFilenameEncoding(fname).c_str());
     sys->executeFile(fname);
-    delete pls;
 }
 
 // -----------------------------------

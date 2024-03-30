@@ -29,7 +29,6 @@
 #define isASCII(a) (a <= 0x7f)
 #define isPLAINASCII(a) (((a >= '0') && (a <= '9')) || ((a >= 'a') && (a <= 'z')) || ((a >= 'A') && (a <= 'Z')))
 #define isUTF8(a, b) ((a & 0xc0) == 0xc0 && (b & 0x80) == 0x80 )
-#define isESCAPE(a, b) ((a == '&') && (b == '#'))
 #define isHTMLSPECIAL(a) ((a == '&') || (a == '\"') || (a == '\'') || (a == '<') || (a == '>'))
 
 // -----------------------------------
@@ -71,7 +70,7 @@ String& String::setFromTime(unsigned int t)
                  tm.tm_year + 1900);
     }else
     {
-        sprintf(data, sizeof(data), "-");
+        snprintf(data, sizeof(data), "-");
     }
 
     type = T_ASCII;
@@ -191,13 +190,14 @@ void String::BASE642ASCII(const char *input)
 // -----------------------------------
 void String::UNKNOWN2UNICODE(const char *in, bool safe)
 {
-    MemoryStream utf8(data, MAX_LEN - 1);
+    std::string utf8;
 
     unsigned char c;
     unsigned char d;
 
     while ((c = *in++) != '\0')
     {
+        std::string buf;
         d = *in;
 
         if (isUTF8(c, d))       // utf8 encoded
@@ -212,43 +212,27 @@ void String::UNKNOWN2UNICODE(const char *in, bool safe)
                     break;
             }
 
-            utf8.writeChar(c);
+            buf += c;
             for (int i = 0; i < numChars - 1; i++)
-                utf8.writeChar(*in++);
+                buf += *in++;
         }
         else if (isSJIS(c, d))           // shift_jis
         {
-            utf8.writeUTF8(JISConverter::sjisToUnicode((c<<8 | d)));
+            buf += str::codepoint_to_utf8(JISConverter::sjisToUnicode((c<<8 | d)));
             in++;
         }
         else if (isEUC(c) && isEUC(d))       // euc-jp
         {
-            utf8.writeUTF8(JISConverter::eucToUnicode((c<<8 | d)));
+            buf += str::codepoint_to_utf8(JISConverter::eucToUnicode((c<<8 | d)));
             in++;
-        }
-        else if (isESCAPE(c, d))        // html escape tags &#xx;
-        {
-            in++;
-            char code[16];
-            char *cp = code;
-            while ((c = *in++) != '\0')
-            {
-                if (c != ';')
-                    *cp++ = c;
-                else
-                    break;
-            }
-            *cp = 0;
-
-            utf8.writeUTF8(strtoul(code, NULL, 10));
         }
         else if (isPLAINASCII(c))   // plain ascii : a-z 0-9 etc..
         {
-            utf8.writeUTF8(c);
+            buf += c;
         }
         else if (isHTMLSPECIAL(c) && safe)
         {
-            const char *str = NULL;
+            const char *str = nullptr;
             if (c == '&') str = "&amp;";
             else if (c == '\"') str = "&quot;";
             else if (c == '\'') str = "&#039;";
@@ -256,41 +240,25 @@ void String::UNKNOWN2UNICODE(const char *in, bool safe)
             else if (c == '>') str = "&gt;";
             else str = "?";
 
-            utf8.writeString(str);
+            buf += str;
         }
         else
         {
-            utf8.writeUTF8(c);
+            buf += str::codepoint_to_utf8(c);
         }
 
-        if (utf8.pos >= (MAX_LEN - 10))
-            break;
-    }
-
-    utf8.writeChar(0);  // null terminate
-}
-
-// -----------------------------------
-void String::ASCII2HTML(const char *in)
-{
-    char *op = data;
-    char *oe = data+MAX_LEN - 10;
-    unsigned char c;
-    const char *p = in;
-    while ((c = *p++) != '\0')
-    {
-        if (((c >= '0') && (c <= '9')) || ((c >= 'a') && (c <= 'z')) || ((c >= 'A') && (c <= 'Z')))
+        if (utf8.size() + buf.size() < MAX_LEN)
         {
-            *op++ = c;
-        }else
-        {
-            std::sprintf(op, "&#x%02X;", (int)c);
-            op += 6;
+            utf8 += buf;
         }
-        if (op >= oe)
+        else
+        {
             break;
+        }
     }
-    *op = 0;
+
+    strncpy(data, utf8.c_str(), sizeof(data));
+    data[sizeof(data)-1] = '\0';
 }
 
 // -----------------------------------
@@ -317,72 +285,6 @@ void String::ASCII2ESC(const char *in, bool safe)
             break;
     }
     *op = 0;
-}
-
-// -----------------------------------
-void String::HTML2ASCII(const char *in)
-{
-    unsigned char c;
-    char *o = data;
-    char *oe = data+MAX_LEN-10;
-    const char *p = in;
-    while ((c = *p++) != '\0')
-    {
-        if ((c == '&') && (p[0] == '#'))
-        {
-            p++;
-            char code[8];
-            char *cp = code;
-            char ec = *p++;     // hex/dec
-            while ((c = *p++) != '\0')
-            {
-                if (c != ';')
-                    *cp++ = c;
-                else
-                    break;
-            }
-            *cp = 0;
-            c = (unsigned char)strtoul(code, NULL, ec=='x'?16:10);
-        }
-        *o++ = c;
-        if (o >= oe)
-            break;
-    }
-
-    *o = 0;
-}
-
-// -----------------------------------
-void String::HTML2UNICODE(const char *in)
-{
-    MemoryStream utf8(data, MAX_LEN-1);
-
-    unsigned char c;
-    while ((c = *in++) != '\0')
-    {
-        if ((c == '&') && (*in == '#'))
-        {
-            in++;
-            char code[16];
-            char *cp = code;
-            char ec = *in++;        // hex/dec
-            while ((c = *in++) != '\0')
-            {
-                if (c != ';')
-                    *cp++ = c;
-                else
-                    break;
-            }
-            *cp = 0;
-            utf8.writeUTF8(strtoul(code, NULL, ec=='x'?16:10));
-        }else
-            utf8.writeUTF8(c);
-
-        if (utf8.pos >= (MAX_LEN-10))
-            break;
-    }
-
-    utf8.writeUTF8(0);
 }
 
 // -----------------------------------
@@ -454,9 +356,6 @@ String& String::convertTo(TYPE t)
             case T_UNKNOWN:
             case T_ASCII:
                 break;
-            case T_HTML:
-                tmp.HTML2ASCII(data);
-                break;
             case T_ESC:
             case T_ESCSAFE:
                 tmp.ESC2ASCII(data);
@@ -483,9 +382,6 @@ String& String::convertTo(TYPE t)
                 break;
             case T_UNICODESAFE:
                 UNKNOWN2UNICODE(tmp.data, true);
-                break;
-            case T_HTML:
-                ASCII2HTML(tmp.data);
                 break;
             case T_ESC:
                 ASCII2ESC(tmp.data, false);
